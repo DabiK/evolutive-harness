@@ -1,6 +1,7 @@
 // Modèle de chaque tentative d'un ticket : une échelle de paliers, un point de départ fixé par le niveau
 // du ticket, un palier de plus à chaque tentative refusée. Aucun effet de bord.
-// Le projet peut remplacer l'échelle et les niveaux dans harness.config.mjs (`models.ladder`, `models.levels`).
+// Le projet peut remplacer les échelles et les niveaux dans harness.config.mjs (`models.ladder`, `models.codexLadder`,
+// `models.levels`).
 
 /** Du moins cher au plus fort. `alias` est le nom qu'accepte le paramètre `model` d'un sous-agent. */
 export const LADDER = [
@@ -8,6 +9,14 @@ export const LADDER = [
   { model: "claude-opus-5-5", alias: "opus", effort: "high" },
   { model: "claude-opus-5-5", alias: "opus", effort: "xhigh" },
   { model: "claude-fable-5-1", alias: "fable", effort: "high" },
+];
+
+/** Échelle du moteur Codex, palier pour palier avec celle de Claude ; le relecteur reste Claude. */
+export const CODEX_LADDER = [
+  { model: "gpt-6.1-sol", effort: "high" },
+  { model: "gpt-6.1-sol", effort: "xhigh" },
+  { model: "gpt-6-astra", effort: "xhigh" },
+  { model: "gpt-6-astra", effort: "max" },
 ];
 
 /**
@@ -22,9 +31,13 @@ export const LEVELS = {
   critique: { start: 2, reviewFloor: 2 },
 };
 
-/** Échelle et niveaux du projet (`models` de harness.config.mjs), complétés par ceux d'ici. */
+/** Échelles et niveaux du projet (`models` de harness.config.mjs), complétés par ceux d'ici. */
 export function modelSettings(models = {}) {
-  return { ladder: models.ladder?.length ? models.ladder : LADDER, levels: { ...LEVELS, ...models.levels } };
+  return {
+    ladder: models.ladder?.length ? models.ladder : LADDER,
+    codexLadder: models.codexLadder?.length ? models.codexLadder : CODEX_LADDER,
+    levels: { ...LEVELS, ...models.levels },
+  };
 }
 
 const DEFAULT_SETTINGS = modelSettings();
@@ -51,16 +64,23 @@ export function attemptsToTop(level, settings = DEFAULT_SETTINGS) {
 }
 
 /** Ce que la session et son relecteur utilisent à ce palier. */
-export function plan(level, attempt, settings = DEFAULT_SETTINGS) {
+export function plan(level, attempt, settings = DEFAULT_SETTINGS, engine = "claude") {
   const rung = rungFor(level, attempt, settings);
   const review = settings.ladder[Math.min(Math.max(rung, settings.levels[level].reviewFloor), top(settings))];
-  return { rung, ...settings.ladder[rung], reviewModel: review.alias };
+  // Le relecteur reste sur l'échelle Claude ; seule l'implémentation change de moteur, au même palier ou au plus haut du sien.
+  const own = engine === "codex" ? settings.codexLadder[Math.min(rung, settings.codexLadder.length - 1)] : settings.ladder[rung];
+  return { rung, ...own, reviewModel: review.alias };
 }
 
-/** « claude-opus-5-5 » → « Claude Opus 5.5 » ; un nom qui ne suit pas ce format → « Claude ». */
-export function displayName(model) {
+/**
+ * « claude-opus-5-5 » → « Claude Opus 5.5 », « gpt-6.1-sol » → « Codex (GPT-6.1 Sol) ». Un nom qui ne suit aucun de ces
+ * formats garde celui de son moteur.
+ */
+export function displayName(model, engine = "claude") {
+  const gpt = /^gpt-([\d.]+)-([a-z]+)$/.exec(model || "");
+  if (gpt) return `Codex (GPT-${gpt[1]} ${gpt[2][0].toUpperCase()}${gpt[2].slice(1)})`;
   const match = /^claude-([a-z]+)-(\d+)-(\d+)$/.exec(model || "");
-  if (!match) return "Claude";
+  if (!match) return engine === "codex" ? "Codex" : "Claude";
   const [, family, major, minor] = match;
   return `Claude ${family[0].toUpperCase()}${family.slice(1)} ${major}.${minor}`;
 }

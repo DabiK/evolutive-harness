@@ -2,8 +2,8 @@
 // Contrôle qualité unique du projet. Les hooks, la boucle de tickets et la CI appellent ce script :
 // une règle s'écrit ici une seule fois. Ce qui est propre au projet vient de harness.config.mjs.
 //
-//   node scripts/check.mjs                 tout : règles, format, lint, cliquet, suites de tests (séquentielles)
-//   node scripts/check.mjs --changed       fichiers modifiés depuis HEAD : règles, format, lint, cliquet, tests modifiés
+//   node scripts/check.mjs                 tout : règles, format, lint, gel du lint, cliquet, suites de tests (séquentielles)
+//   node scripts/check.mjs --changed       fichiers modifiés depuis HEAD : règles, format, lint, gel du lint, cliquet, tests modifiés
 //   node scripts/check.mjs --file <chemin> un fichier : règles, format, lint (contrôle rapide après une édition)
 //   --no-tests  ne lance aucun test        --json  sortie structurée
 //
@@ -26,6 +26,8 @@ const step = (name, status, detail = "") => steps.push({ name, status, detail })
 // Durée maximale d'une suite de tests. Sans elle, un fichier de test qui ne se termine pas bloque le contrôle,
 // donc la boucle, sans fin et sans message.
 const TEST_BUDGET_MS = Number(process.env.HARNESS_TEST_BUDGET_MS) || 20 * 60 * 1000;
+// Lignes gardées du détail d'un échec de `node --test` : assez pour lire chaque assertion, sans noyer le rapport.
+const NODE_FAILURE_DETAIL_MAX_LINES = 120;
 // Les tests du harnais lui-même, toujours lancés, quelle que soit la configuration du projet.
 const HARNESS_SUITE = { name: "tests du harnais", command: ["node", "--test", "--test-concurrency=1"], files: /^tests\/harness\/[^/]+\.test\.cjs$/ };
 // Fichiers passés à ESLint : JavaScript et TypeScript, même quand `codeFiles` couvre d'autres langages.
@@ -144,10 +146,65 @@ function lint(files) {
   step("lint", result.code === 0 ? "ok" : "ko", result.code === 0 ? "" : tail(result.out, 30));
 }
 
+/** Comparaison pure du stock gelé : chaque couple nouveau ou augmenté est une hausse. */
+function suppressionIncreases(before, current) {
+  const increases = [];
+  for (const [file, rules] of Object.entries(current)) {
+    for (const [rule, { count: now }] of Object.entries(rules)) {
+      const known = Object.hasOwn(before, file) && Object.hasOwn(before[file], rule);
+      const previous = known ? before[file][rule].count : 0;
+      if (!known || now > previous) increases.push({ file, rule, before: previous, now });
+    }
+  }
+  return increases;
+}
+
+const SUPPRESSIONS_FILE = "eslint-suppressions.json";
+
+function readTreeSuppressions() {
+  const file = path.join(root, SUPPRESSIONS_FILE);
+  try {
+    fs.lstatSync(file);
+  } catch (error) {
+    if (error.code === "ENOENT") return {};
+    throw error;
+  }
+  return JSON.parse(fs.readFileSync(file, "utf8"));
+}
+
+function readHeadSuppressions() {
+  const entry = git("ls-tree", "--name-only", "HEAD", "--", SUPPRESSIONS_FILE);
+  if (entry.code !== 0) throw new Error(`HEAD:${SUPPRESSIONS_FILE} : lecture Git impossible : ${entry.out}`);
+  if (!entry.out.trim()) return {};
+  const source = inHead(SUPPRESSIONS_FILE);
+  if (source === null) throw new Error(`HEAD:${SUPPRESSIONS_FILE} : lecture Git impossible`);
+  try {
+    return JSON.parse(source);
+  } catch (error) {
+    throw new Error(`HEAD:${SUPPRESSIONS_FILE} : JSON invalide : ${error.message}`);
+  }
+}
+
+function lintFreeze() {
+  try {
+    const headFreeze = readHeadSuppressions();
+    const treeFreeze = readTreeSuppressions();
+    const increases = suppressionIncreases(headFreeze, treeFreeze);
+    const details = increases.map(({ file, rule, before, now }) => `${file} : ${rule} : ${before} → ${now}`);
+    if (increases.length) details.push("Une infraction nouvelle se corrige au lieu de se geler.");
+    step("gel du lint", increases.length ? "ko" : "ok", details.join("\n"));
+  } catch (error) {
+    step("gel du lint", "ko", `${SUPPRESSIONS_FILE} : gel illisible ou JSON invalide : ${error.message}`);
+  }
+}
+
 function ratchet() {
   const baseline = readBaseline(root);
   if (!baseline) return step("cliquet", "skip", "aucun plancher (node scripts/quality/ratchet.mjs --init)");
-  const { regressions, improvements } = compare(baseline, measure(root, config), directions(config));
+  const senses = directions(config);
+  const unknown = Object.keys(baseline).filter((key) => !Object.hasOwn(senses, key));
+  if (unknown.length) return step("cliquet", "ko", "Mesures inconnues du plancher : " + unknown.join(", ") + ". Migrer le plancher explicitement.");
+  const { regressions, improvements } = compare(baseline, measure(root, config), senses);
   const line = ({ key, before, now }) => `${key} : ${before} → ${now}`;
   if (regressions.length) return step("cliquet", "ko", "Mesures dégradées :\n" + regressions.map(line).join("\n"));
   step("cliquet", "ok", improvements.length ? "Mesures améliorées : " + improvements.map(line).join(", ") : "");
@@ -155,6 +212,16 @@ function ratchet() {
 
 /** Résumé d'une sortie de `node --test` ; vide pour un autre lanceur. */
 const nodeSummary = (out) => out.split("\n").filter((l) => /^ℹ (tests|pass|fail)|^✖/.test(l)).slice(0, 40).join("\n");
+
+/** Détail d'un échec de `node --test` : le résumé, puis la liste des tests en échec avec leur assertion. */
+function nodeFailureDetail(output, summary) {
+  const start = output.search(/^✖ failing tests:/m);
+  if (start === -1) return summary;
+  const lines = (summary + "\n\n" + output.slice(start).trimEnd()).split("\n");
+  if (lines.length <= NODE_FAILURE_DETAIL_MAX_LINES) return lines.join("\n");
+  const notice = `… Détail tronqué (limite de ${NODE_FAILURE_DETAIL_MAX_LINES} lignes).`;
+  return [...lines.slice(0, NODE_FAILURE_DETAIL_MAX_LINES - 1), notice].join("\n");
+}
 
 /** Une suite de tests : tous ses fichiers, ou seulement ceux qui ont changé. */
 function testSuite(suite, all, changed) {
@@ -167,7 +234,8 @@ function testSuite(suite, all, changed) {
   const result = run(command === "node" ? process.execPath : command, [...commandArgs, ...targets], TEST_BUDGET_MS);
   const ok = result.code === 0;
   const summary = nodeSummary(result.out) || tail(result.out, ok ? 3 : 25);
-  const detail = result.timedOut ? overBudget(`un test de « ${suite.name} »`) + "\n" + tail(result.out, 15) : summary;
+  let detail = ok ? summary : nodeFailureDetail(result.out, summary);
+  if (result.timedOut) detail = overBudget(`un test de « ${suite.name} »`) + "\n" + tail(result.out, 15);
   step(`${suite.name} (${targets.length} fichier(s))`, ok ? "ok" : "ko", detail);
 }
 
@@ -192,6 +260,7 @@ if (fileArg) {
   fileRules(changed ?? changedFiles());
   format(names);
   lint(names);
+  lintFreeze();
   ratchet();
   if (!flag("--no-tests")) {
     const all = projectFiles();

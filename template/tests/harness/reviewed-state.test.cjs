@@ -65,3 +65,37 @@ for (const { behaviour, report, verdict } of reports) {
     assert.equal(reviewVerdict(report), verdict);
   });
 }
+
+for (const [name, content] of [
+  ["missing", undefined], ["valid", '["notes/café.md"]'], ["empty", "[]"],
+  ["malformed JSON", "{ not json"], ["unexpected object", "{}"], ["non-string path", '["notes.md", 2]'],
+]) {
+  test(`the shared untracked reader distinguishes an absent file from an unreadable list: ${name}`, async (t) => {
+    const fs = require("node:fs");
+    const os = require("node:os");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-state-"));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const { readUntrackedBefore, UNTRACKED_BEFORE } = await reviewedState();
+    if (content !== undefined) fs.writeFileSync(path.join(dir, UNTRACKED_BEFORE), content);
+    const read = readUntrackedBefore(dir);
+    if (name === "missing") assert.deepEqual(read, { paths: [], missing: true });
+    else if (name === "valid" || name === "empty") assert.deepEqual(read, { paths: JSON.parse(content) });
+    else {
+      assert.match(read.unreadable, /untracked-before\.json est illisible/);
+      assert.ok(read.problem.includes(read.unreadable), read.problem);
+      assert.equal(read.paths, undefined);
+    }
+  });
+}
+
+for (const [report, expected] of [
+  ["NON CORRIGÉS : 0", 0], ["NON CORRIGÉS : 2", 2], ["", 1], ["NON CORRIGÉS : inconnu", 1],
+  ["NON CORRIGÉS : -1", 1], ["NON CORRIGÉS : 0.5", 1], ["NON CORRIGÉS : 0 restant", 1],
+  ["NON CORRIGÉS : 9007199254740992", 1], ["NON CORRIGÉS :\n0", 1],
+  ["NON CORRIGÉS : inconnu\nNON CORRIGÉS : 0", 1], ["  non corrigés: 0  \r\n", 0],
+]) {
+  test(`the correction counter requires a safe integer on its first line: ${JSON.stringify(report)}`, async () => {
+    const { uncorrectedFindings } = await reviewedState();
+    assert.equal(uncorrectedFindings(report), expected);
+  });
+}

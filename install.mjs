@@ -21,7 +21,8 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const PROJECT_FILES = ["CLAUDE.md", "harness.config.mjs", "docs/standards.md"];
+// AGENTS.md est un lien vers CLAUDE.md : les sessions Codex lisent les mêmes consignes que Claude.
+const PROJECT_FILES = ["CLAUDE.md", "AGENTS.md", "harness.config.mjs", "docs/standards.md"];
 const SETTINGS = ".claude/settings.json";
 const LOCK = ".claude/harness.lock.json";
 const GITIGNORE_LINE = ".harness-state/";
@@ -147,8 +148,13 @@ function writer(options) {
   const copy = (fromRoot, toRoot, rel, label) => {
     done.push(`${label} ${rel}`);
     if (options.dryRun) return;
-    fs.mkdirSync(path.dirname(path.join(toRoot, rel)), { recursive: true });
-    fs.copyFileSync(path.join(fromRoot, rel), path.join(toRoot, rel));
+    const source = path.join(fromRoot, rel);
+    const destination = path.join(toRoot, rel);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    // Un lien du modèle reste un lien dans le projet : il vise un fichier du projet, pas une copie figée.
+    if (!fs.lstatSync(source).isSymbolicLink()) return fs.copyFileSync(source, destination);
+    fs.rmSync(destination, { force: true });
+    fs.symlinkSync(fs.readlinkSync(source), destination);
   };
   const remove = (root, rel) => {
     done.push(`retiré ${rel}`);
@@ -189,7 +195,8 @@ function shared(template, options, lock, write) {
     const block = `# État local de la boucle (evolutive-harness)\n${GITIGNORE_LINE}\n`;
     write.writeText(target, ".gitignore", `${text}${separator}${block}`, text ? "complété" : "ajouté");
   }
-  for (const rel of template.project) if (!fs.existsSync(path.join(target, rel))) write.copy(template.from, target, rel, "ajouté");
+  const present = (rel) => fs.lstatSync(path.join(target, rel), { throwIfNoEntry: false }) !== undefined;
+  for (const rel of template.project) if (!present(rel)) write.copy(template.from, target, rel, "ajouté");
 }
 
 /** Écrit le verrou, sauf s'il dirait la même chose que l'actuel : une mise à jour sans effet ne laisse pas de diff. */

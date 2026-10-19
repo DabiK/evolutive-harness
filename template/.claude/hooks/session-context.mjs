@@ -3,9 +3,16 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { loopMode, projectDir, readInput } from "./lib.mjs";
+import { loopMode, projectDir, readInput, stateDir, ticketSkill } from "./lib.mjs";
 
-const root = projectDir(readInput());
+const input = readInput();
+const root = projectDir(input);
+const ticket = process.env.HARNESS_TICKET;
+const skill = ticketSkill();
+if (loopMode && ticket) {
+  const marker = { session: input.session_id || null, run: process.env.HARNESS_HOOK_RUN || null };
+  fs.writeFileSync(path.join(stateDir(root, "tickets", ticket), "hooks-started.json"), JSON.stringify(marker) + "\n");
+}
 const sh = (command, args) => (spawnSync(command, args, { cwd: root, encoding: "utf8" }).stdout || "").trim();
 
 const branch = sh("git", ["branch", "--show-current"]) || "(HEAD détachée)";
@@ -32,8 +39,8 @@ const lines = [
   `Branche ${branch} — ${head}`,
   `${dirty} fichier(s) modifié(s) ou non suivi(s).`,
   loopMode
-    ? `Mode boucle : ticket ${process.env.HARNESS_TICKET} (${process.env.HARNESS_TICKET_FILE}). Suis la skill ticket ; ne committe pas, ne pousse pas.`
-    : "Mode interactif. Pour traiter un ticket de docs/travail/tickets/, suivre la skill ticket.",
+    ? `Mode boucle : ticket ${ticket} (${process.env.HARNESS_TICKET_FILE}). Suis la skill ${skill} ; ne committe pas, ne pousse pas.`
+    : `Mode interactif. Pour traiter un ticket de docs/travail/tickets/, suivre la skill ${skill}.`,
   "Contrôle qualité : node scripts/check.mjs (--changed pour les fichiers modifiés). Règles : docs/standards.md.",
 ];
 const proposals = loopMode ? 0 : openProposals();

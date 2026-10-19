@@ -1,23 +1,23 @@
 # evolutive-harness
 
-Un harnais Claude Code à installer dans un projet : un contrôle qualité unique, un cliquet, des
-garde-fous, trois rôles et une boucle qui traite des tickets un par un. Il se resserre avec le projet
+Un harnais Claude Code et Codex à installer dans un projet : un contrôle qualité unique, un cliquet, des
+garde-fous, des rôles et une boucle qui traite des tickets un par un. Il se resserre avec le projet
 et fait remonter ses améliorations d'un projet à l'autre.
 
-Le principe tient en une phrase : **la session propose, le script décide.** Une session Claude Code fait
-le travail d'un ticket ; un script qu'elle ne peut pas contourner revérifie tout avant de committer.
+Le principe tient en une phrase : **la session propose, le script décide.** Une session Claude Code ou
+Codex fait le travail d'un ticket ; un script qu'elle ne peut pas contourner revérifie tout avant de committer.
 
 ## Ce qu'il contient
 
 | Bloc | Où, une fois installé | Rôle |
 | --- | --- | --- |
-| Contrôle unique | `scripts/check.mjs` | règles par fichier, format, lint, cliquet, suites de tests en séquentiel avec une durée maximale ; appelé par les hooks, la boucle et la CI |
+| Contrôle unique | `scripts/check.mjs` | règles par fichier, format, lint, gel du lint, cliquet, suites de tests en séquentiel avec une durée maximale ; appelé par les hooks, la boucle et la CI |
 | Cliquet | `scripts/quality/` | des mesures simples (lignes longues, `catch` vides, cas de test…) qui ne peuvent pas se dégrader ; le plancher se resserre à chaque ticket |
-| Garde-fous | `.claude/hooks/` | en boucle, refusent les commandes destructrices, commit, push, changement de branche, installation non autorisée, écriture hors projet et modification du harnais ; en interactif, demandent confirmation pour les commandes destructrices et la modification du harnais ; fin de tour bloquée sans verdict ou sur un contrôle rouge |
-| Rôles | `.claude/agents/` | `explorateur` (lecture seule), `implementeur` (code et tests ensemble), `relecteur` (regard neuf, verdict lu par la machine) |
-| Méthodes | `.claude/skills/` | `ticket` (orchestration de bout en bout), `decoupage` (écrire des tickets), `tests` (rouge vu, vert minimal) |
-| Boucle | `scripts/loop/` | une session fraîche par ticket, une échelle de modèles, l'état relu vérifié par empreinte, le commit et le push par le script, une rétrospective après chaque ticket |
-| Tests du harnais | `tests/harness/` | 99 tests qui font tourner hooks, cliquet et boucle dans des dépôts jetables, avec une fausse session Claude |
+| Garde-fous | `.claude/hooks/`, `.codex/hooks.json` | les mêmes scripts pour Claude et Codex ; en boucle, refusent les commandes destructrices, commit, push, changement de branche, installation non autorisée, écriture hors projet et modification du harnais ; en interactif, demandent confirmation pour les commandes destructrices et la modification du harnais ; fin de tour bloquée sans verdict ou sur un contrôle rouge |
+| Rôles | `.claude/agents/` | `explorateur` (lecture seule), `implementeur` (code et tests ensemble), `relecteur` (regard neuf, verdict lu par la machine), `harmoniseur` (corrige les consignes) |
+| Méthodes | `.claude/skills/`, `.agents/skills/` | `ticket` (orchestration de bout en bout), `ticket-codex` (le même travail pour Codex), `decoupage` (écrire des tickets), `tests` (rouge vu, vert minimal), `harmonisation` (consignes corrigées à partir des rétrospectives) |
+| Boucle | `scripts/loop/` | une session fraîche par ticket, Claude ou Codex, une échelle de modèles par moteur, l'état relu vérifié par empreinte, des relectures de correction, le commit et le push par le script, une rétrospective après chaque ticket, l'harmonisation des consignes, la relève du processus après intégration de son propre code, la reprise après quota |
+| Tests du harnais | `tests/harness/` | des centaines de tests qui font tourner hooks, cliquet et boucle dans des dépôts jetables, avec de fausses sessions Claude et Codex |
 | Mode d'emploi | `docs/travail/README.md` | lancer la boucle, lire un échec, débloquer un ticket, faire évoluer le harnais |
 
 ## Le cycle d'un ticket
@@ -50,6 +50,8 @@ Rien ne change sans décision du propriétaire, mais tout est en place pour que 
 - **Échelle de modèles.** Chaque tentative refusée monte d'un palier ; le niveau du ticket fixe le départ
   et le palier minimal du relecteur. L'échelle se règle par projet, à partir des coûts relevés dans
   `.harness-state/loop/events.jsonl`.
+- **Harmonisation.** Avec `--tune-every <n>`, les problèmes que les rétrospectives relèvent sur plusieurs
+  tickets sont corrigés dans les skills et les agents, jamais dans les contrôles, relus puis committés à part.
 - **Tickets de harnais.** Un ticket `harnais: oui` lève le verrou du harnais, et lui seul. En session
   interactive, le propriétaire peut l'ouvrir pour une durée bornée.
 - **Remontée entre projets.** Une amélioration faite dans un projet remonte dans ce dépôt (`--compare`,
@@ -57,7 +59,8 @@ Rien ne change sans décision du propriétaire, mais tout est en place pour que 
 
 ## Installer
 
-Prérequis : Node 20 ou plus, Git, et le CLI `claude` pour la boucle.
+Prérequis : Node 20 ou plus, Git, le CLI `claude` pour la boucle, et le CLI `codex` pour son moteur Codex.
+Les hooks Codex s'approuvent une fois par dépôt : `codex` à la racine, puis `/hooks`.
 
 ```sh
 git clone git@github.com:DabiK/evolutive-harness.git
@@ -82,7 +85,7 @@ Trois sortes de fichiers :
 | Sorte | Fichiers | `--update` |
 | --- | --- | --- |
 | Noyau | tout le reste du modèle | remplacé, sauf s'il a été modifié dans le projet |
-| Projet | `CLAUDE.md`, `harness.config.mjs`, `docs/standards.md` | jamais touché |
+| Projet | `CLAUDE.md`, `AGENTS.md` (lien vers `CLAUDE.md`), `harness.config.mjs`, `docs/standards.md` | ajouté s'il manque, jamais touché ensuite |
 | Fusionné | `.claude/settings.json`, `.gitignore` | hooks du harnais remplacés, le reste gardé |
 
 Le verrou `.claude/harness.lock.json`, à committer dans le projet, garde l'empreinte de chaque fichier
@@ -112,12 +115,15 @@ Un fichier du noyau modifié dans le projet n'est jamais écrasé sans `--force`
 | `maxLineLength` | `160` | longueur maximale d'une ligne |
 | `suites` | aucune | `{ name, command, files }` : la commande reçoit les fichiers de la suite (tous, ou ceux modifiés avec `--changed`) |
 | `measures` | aucune | `{ pattern, direction, perFile, except }` : un motif compté dans le code de production, ajouté au cliquet |
-| `models` | l'échelle de `scripts/loop/models.mjs` | `ladder`, `levels`, `retro` : échelle de la boucle, niveaux de ticket, modèle de la rétrospective |
+| `models` | les échelles de `scripts/loop/models.mjs` | `ladder`, `codexLadder`, `levels`, `retro` : échelles Claude et Codex de la boucle, niveaux de ticket, modèle de la rétrospective |
 
 La boucle passe à ses sessions les variables `HARNESS_LOOP`, `HARNESS_TICKET`, `HARNESS_TICKET_FILE`,
-`HARNESS_ALLOW_INSTALL`, `HARNESS_EDIT` (ticket de harnais) et `HARNESS_REVIEW_MODEL`. `HARNESS_CLAUDE_BIN`
-remplace le CLI `claude` (les tests y mettent une fausse session) ; `HARNESS_TEST_BUDGET_MS` borne la
-durée d'une suite de tests.
+`HARNESS_ALLOW_INSTALL`, `HARNESS_EDIT` (ticket de harnais), `HARNESS_EDIT_SCOPE` (portée d'une
+harmonisation), `HARNESS_REVIEW_MODEL`, `HARNESS_ENGINE` (`codex` pour une session Codex), `HARNESS_HOOK_RUN`
+(témoin de chargement des hooks Codex) et `HARNESS_TUNE`. `HARNESS_CLAUDE_BIN` et `HARNESS_CODEX_BIN`
+remplacent les CLI `claude` et `codex` (les tests y mettent de fausses sessions) ;
+`HARNESS_CODEX_SKIP_CAPACITY_WAIT` supprime l'attente entre deux reprises de capacité ;
+`HARNESS_TEST_BUDGET_MS` borne la durée d'une suite de tests.
 
 ## Développer ce dépôt
 
@@ -128,7 +134,7 @@ tests/               tests de l'installeur
 CHANGELOG.md         ce que chaque version change, pour qui lance --update
 ```
 
-`npm test` lance les tests de l'installeur puis ceux du harnais, en séquentiel (une à deux minutes).
+`npm test` lance les tests de l'installeur puis ceux du harnais, en séquentiel (cinq minutes environ).
 Une évolution du noyau se fait avec son test, comme dans un projet, puis s'inscrit dans `CHANGELOG.md`.
 
 ## Limites
@@ -136,9 +142,13 @@ Une évolution du noyau se fait avec son test, comme dans un projet, puis s'insc
 - Les garde-fous lisent le texte des commandes : ils rattrapent l'erreur, pas la malveillance. Ce
   n'est pas un bac à sable.
 - La boucle lit le flux `stream-json` de Claude Code (`result`, `modelUsage`, `permission_denials`,
-  `tool_use_result.agentType`, `handbackReport`). Les tests le simulent avec une fausse session : un
-  changement de format du CLI ne les ferait pas échouer. Après une mise à jour de Claude Code,
-  vérifier un vrai ticket avec `--max 1`.
+  `tool_use_result.agentType`, `handbackReport`) et le flux `--json` de `codex exec` (événements de
+  session, de tour et d'erreur, messages de capacité et de quota). Les tests les simulent avec de fausses
+  sessions : un changement de format d'un CLI ne les ferait pas échouer. Après une mise à jour de Claude
+  Code ou de Codex, vérifier un vrai ticket avec `--max 1`.
+- Le moteur Codex dépend d'options de `codex exec` (`--disable`, `--dangerously-bypass-hook-trust`,
+  `exec resume`) et de l'approbation de `.codex/hooks.json` dans la config de l'utilisateur, liée au
+  chemin absolu du dépôt : un worktree ou une copie demande sa propre approbation.
 - Les scripts sont en Node. Un projet Python ou autre les utilise tels quels, avec ses propres suites
   dans `harness.config.mjs` ; la règle des `catch` vides ne vise que JavaScript et TypeScript.
 - Le format (Prettier) et le lint (ESLint) du projet ne jugent pas le noyau du harnais, qui suit son
@@ -150,5 +160,6 @@ Une évolution du noyau se fait avec son test, comme dans un projet, puis s'insc
 
 Extrait le 14 octobre 2026 du harnais de TVLens (commit `49cfbb4`), avec le ticket de harnais T153 alors
 en cours : un relecteur n'accepte que sans constat dans le périmètre, et les écarts aux critères sont
-déclarés avant l'implémentation. TVLens était parti du squelette harness-codex-claude. Les skills
+déclarés avant l'implémentation. Mis à jour le 19 octobre 2026 jusqu'au commit TVLens `b893bae` (version
+0.2.0 : moteur Codex, harmonisation, relève, quota ; voir `CHANGELOG.md`). TVLens était parti du squelette harness-codex-claude. Les skills
 `decoupage` et `tests` sont adaptées de mattpocock/skills (licence MIT).

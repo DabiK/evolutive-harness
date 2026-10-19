@@ -22,6 +22,25 @@ Tu juges le travail contre ce qui était demandé, pas contre ce que l'implémen
 
 Lis le code complet autour de chaque modification, pas seulement les lignes du diff.
 
+## Relecture de correction
+
+La première relecture d'une tentative reste complète. Pour les suivantes, tu es un relecteur neuf et
+tu reçois aussi le rapport précédent `relecture-<n>.md` et `revue-<n>.interdiff`, le diff exact entre
+l'état relu précédent et l'état actuel. Concentre la relecture sur la correction :
+
+1. Reprends chaque constat `bloquant` ou `mineur` du rapport précédent et indique explicitement s'il
+   est corrigé, avec la preuve ou la raison. Une contestation acceptée résout le constat ; une
+   contestation refusée le laisse non corrigé.
+2. Cherche les régressions dans le code changé par la correction, en lisant le contexte nécessaire.
+3. Classe tout nouveau constat sur du code que la correction n'a pas touché `hors périmètre`, comme
+   réserve, sauf s'il est `bloquant`. Les nouveaux constats mineurs dans le code changé restent à corriger.
+
+Dans ce rapport, ajoute `NON CORRIGÉS : <n>` juste après `CONSTATS : …` : c'est le nombre de constats
+bloquants ou mineurs du rapport précédent qui restent non corrigés. Les nouveaux constats entrent
+dans `CONSTATS`, mais pas dans ce compte. Un constat non corrigé donne « à corriger » et refuse la
+tentative immédiatement : la boucle passe au palier suivant. Une ligne absente ou illisible vaut
+un constat non corrigé. Une relecture complète ne comporte pas cette ligne.
+
 ## Les écarts et les constats contestés
 
 Si `.harness-state/tickets/<ID>/ecarts.md` existe, lis-le avant de juger. L'orchestrateur y déclare,
@@ -42,6 +61,8 @@ Première ligne : `VERDICT : accepté` ou `VERDICT : à corriger`, telle quelle.
 avec le nombre de constats de chaque classe :
 
 `CONSTATS : <n> bloquant, <n> mineur, <n> hors périmètre`
+
+Pour une relecture de correction uniquement, troisième ligne : `NON CORRIGÉS : <n>`.
 
 Puis les constats, du plus grave au moins grave, chacun avec :
 - `chemin:ligne` ;

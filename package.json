@@ -1,7 +1,7 @@
 {
   "name": "evolutive-harness",
-  "version": "0.1.0",
-  "description": "Harnais Claude Code portable : contrôle unique, cliquet, garde-fous, trois rôles et une boucle de tickets qui se resserre avec le projet.",
+  "version": "0.2.0",
+  "description": "Harnais Claude Code et Codex portable : contrôle unique, cliquet, garde-fous, rôles et une boucle de tickets qui se resserre avec le projet.",
   "private": true,
   "engines": {
     "node": ">=20"

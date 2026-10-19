@@ -16,7 +16,8 @@ function tempDir(prefix) {
 function setup(t, files = {}) {
   const project = tempDir("harness-project-");
   const template = path.join(tempDir("harness-template-"), "template");
-  fs.cpSync(TEMPLATE, template, { recursive: true });
+  // Les liens du modèle (AGENTS.md) restent relatifs dans la copie, comme dans le dépôt.
+  fs.cpSync(TEMPLATE, template, { recursive: true, verbatimSymlinks: true });
   t.after(() => {
     fs.rmSync(project, { recursive: true, force: true });
     fs.rmSync(path.dirname(template), { recursive: true, force: true });
@@ -58,6 +59,38 @@ test("installing copies the core and the project files, merges settings and .git
   assert.ok(commands(settings).some((c) => c.includes(".claude/hooks/stop-gate.mjs")));
   assert.equal(env.read(env.project, ".gitignore").match(/^\.harness-state\/$/gm).length, 1);
   assert.equal(env.run().code, 1, "a second install is refused: the update is the way forward");
+});
+
+test("installing links AGENTS.md to the project's CLAUDE.md and brings the Codex engine with its hooks and skill", (t) => {
+  const env = setup(t);
+  const result = env.run();
+  assert.equal(result.code, 0, result.out);
+  const agents = path.join(env.project, "AGENTS.md");
+  assert.equal(fs.lstatSync(agents).isSymbolicLink(), true);
+  assert.equal(fs.readlinkSync(agents), "CLAUDE.md");
+  assert.equal(fs.realpathSync(agents), path.join(env.project, "CLAUDE.md"));
+  const lock = JSON.parse(env.read(env.project, ".claude/harness.lock.json"));
+  assert.equal(lock.files["AGENTS.md"], undefined);
+  for (const rel of [".codex/hooks.json", ".agents/skills/ticket-codex/SKILL.md", "scripts/loop/codex.mjs", "scripts/loop/tune.mjs"]) {
+    assert.equal(env.read(env.project, rel), env.read(env.template, rel), rel);
+    assert.ok(lock.files[rel], rel);
+  }
+});
+
+test("an update adds the AGENTS.md link only where the project has none, and keeps the project's own", (t) => {
+  const env = setup(t);
+  assert.equal(env.run().code, 0);
+  fs.rmSync(path.join(env.project, "AGENTS.md"));
+  const linked = env.run("--update");
+  assert.equal(linked.code, 0, linked.out);
+  assert.match(linked.out, /ajouté AGENTS\.md/);
+  assert.equal(fs.readlinkSync(path.join(env.project, "AGENTS.md")), "CLAUDE.md");
+  fs.rmSync(path.join(env.project, "AGENTS.md"));
+  env.write(env.project, "AGENTS.md", "# Codex, the project's own words\n");
+  const kept = env.run("--update");
+  assert.equal(kept.code, 0, kept.out);
+  assert.doesNotMatch(kept.out, /AGENTS\.md/);
+  assert.equal(env.read(env.project, "AGENTS.md"), "# Codex, the project's own words\n");
 });
 
 test("installing over a different core file writes nothing; --force replaces it; an existing project file is kept", (t) => {
@@ -142,7 +175,7 @@ test("compare tells which side changed, and pull brings a project improvement ba
 test("pull refuses the project's own files and anything outside the harness", (t) => {
   const env = setup(t, { "src/app.js": "module.exports = 1;\n" });
   assert.equal(env.run().code, 0);
-  const own = ["CLAUDE.md", "harness.config.mjs", "scripts/quality/baseline.json", ".claude/settings.json", "src/app.js"];
+  const own = ["CLAUDE.md", "AGENTS.md", "harness.config.mjs", "scripts/quality/baseline.json", ".claude/settings.json", "src/app.js"];
   for (const rel of [...own, "docs/travail/tickets/012-a-ticket.md", "docs/travail/notes.md"]) {
     env.write(env.project, rel, "{}\n");
     assert.equal(env.run("--pull", rel).code, 2, rel);

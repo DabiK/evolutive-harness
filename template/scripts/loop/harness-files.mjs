@@ -4,13 +4,23 @@
 /** Ce qui définit les règles : intouchable par un ticket, sauf s'il porte « harnais: oui ». */
 export const PROTECTED = [
   ".claude/",
+  ".codex/",
+  ".agents/",
   "scripts/check.mjs",
   "scripts/quality/",
   "scripts/loop/",
   "tests/harness/",
   "harness.config.mjs",
   "CLAUDE.md",
+  "AGENTS.md",
   "docs/standards.md",
+  // Les réglages du lint et du format : les relâcher ferait passer un contrôle rouge sans corriger le code.
+  "eslint.config.mjs",
+  "eslint.config.js",
+  "eslint.config.cjs",
+  ".prettierrc",
+  ".prettierrc.json",
+  ".prettierignore",
 ];
 
 /**
@@ -21,6 +31,8 @@ export const CORE = [
   ".claude/hooks/",
   ".claude/agents/",
   ".claude/skills/",
+  ".codex/hooks.json",
+  ".agents/skills/",
   "scripts/check.mjs",
   "scripts/quality/config.mjs",
   "scripts/quality/metrics.mjs",

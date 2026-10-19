@@ -15,6 +15,12 @@ export function readInput() {
 
 export const loopMode = process.env.HARNESS_LOOP === "1";
 
+/** Sans racine Claude, les hooks partagés sont reçus par Codex, même en interactif. */
+export function ticketSkill() {
+  const codex = process.env.HARNESS_ENGINE === "codex" || !process.env.CLAUDE_PROJECT_DIR;
+  return codex ? ".agents/skills/ticket-codex/SKILL.md" : "ticket";
+}
+
 export function projectDir(input) {
   return process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd();
 }
@@ -22,6 +28,15 @@ export function projectDir(input) {
 /** Chemin relatif au projet, avec des « / » ; commence par « .. » si le fichier est en dehors. */
 export function relative(root, file) {
   return path.relative(root, path.resolve(root, file)).split(path.sep).join("/");
+}
+
+/** Chemins d'une édition ou d'un patch Codex, sources et destinations de déplacement comprises. */
+export function editPaths(input) {
+  const target = input.tool_input?.file_path || input.tool_input?.notebook_path;
+  if (target) return [target];
+  return [...String(input.tool_input?.command || "").matchAll(
+    /^\s*\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/gm,
+  )].map((match) => match[1].trim());
 }
 
 /** Réponse d'un hook PreToolUse : "deny" refuse, "ask" demande à la personne présente. */

@@ -57,7 +57,7 @@ function harnessRepo(files = {}) {
   git("add", "-A");
   git("commit", "-q", "-m", "init");
 
-  return { root, write, read, run, node, git, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
+  return { root, write, read, run, node, git, env, cleanup: () => fs.rmSync(root, { recursive: true, force: true }) };
 }
 
 module.exports = { harnessRepo };

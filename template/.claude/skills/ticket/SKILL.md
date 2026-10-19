@@ -52,10 +52,16 @@ node scripts/loop/reviewed-state.mjs record      # hors boucle : ajouter --ticke
 
 La commande écrit dans le dossier d'état `revue-<n>.diff` (les fichiers suivis par rapport à `HEAD`,
 puis chaque fichier nouveau en entier), `revue-<n>.fichiers` (la liste des fichiers) et
-`reviewed-state.json`, et affiche leurs chemins. Donne au relecteur le chemin du ticket, ces deux
-fichiers `revue-<n>` et `.harness-state/tickets/<ID>/ecarts.md` quand il existe, rien d'autre. Ton avis
-ne lui parvient que par `ecarts.md` (un écart déclaré, un constat contesté avec sa raison), jamais par
-ton message ; le compte rendu de l'implémenteur ne lui est pas donné. Lance-le au premier plan et ne lui
+`reviewed-state.json`, avec une empreinte d'arbre Git incluant les fichiers nouveaux du ticket, sans
+toucher à l'index réel ni à l'arbre de travail. À partir du deuxième état, elle écrit aussi
+`revue-<n>.interdiff`, le diff exact depuis l'état relu précédent, et affiche tous les chemins.
+La première relecture de chaque tentative reste complète : donne au relecteur le chemin du ticket,
+les deux fichiers `revue-<n>` (diff et liste) et `.harness-state/tickets/<ID>/ecarts.md` quand il existe.
+Pour une relecture de correction, ajoute le rapport précédent `relecture-<n>.md` et l'interdiff
+affiché par `record`, et commence le prompt par la ligne exacte `Fais une relecture de correction.`.
+Le hook reconnaît cette demande et enregistre « à corriger » si `NON CORRIGÉS` est positif, absent ou illisible.
+Ton avis ne lui parvient que par `ecarts.md` (un écart déclaré, un constat contesté avec sa raison),
+jamais par ton message ; le compte rendu de l'implémenteur ne lui est pas donné. Lance-le au premier plan et ne lui
 fixe pas de modèle : dans la boucle, un hook impose celui du palier et enregistre son verdict dans
 `relectures.jsonl`. Le hook lit ce verdict sur deux lignes du rapport, `VERDICT : …` et
 `CONSTATS : <n> bloquant, <n> mineur, <n> hors périmètre`. Un « accepté » qui compte un bloquant ou un
@@ -71,9 +77,15 @@ enregistrée, ou si le dernier relecteur n'a pas rendu « accepté » sur cette 
 Verdict « à corriger » : tout constat `bloquant` ou `mineur` retourne à `implementeur`, puis enregistre
 de nouveau l'état relu et fais relire par un **nouveau** `relecteur`. Tu peux aussi contester un constat
 au lieu de le faire corriger : écris-le dans `.harness-state/tickets/<ID>/ecarts.md` avec une raison
-précise, et le relecteur suivant tranche ; un constat qu'il maintient retourne à l'implémenteur. Les
+précise, et le relecteur suivant tranche. Le nouveau relecteur reçoit le rapport précédent et
+l'interdiff : il vérifie chaque ancien constat, cherche les régressions dans le code changé et met
+les nouveaux mineurs sur du code inchangé en réserves `hors périmètre` ; un bloquant reste possible partout. Les
 constats `hors périmètre` ne se corrigent pas dans le ticket : ils deviennent des réserves (étape 8).
-Trois tours au plus. Au-delà, verdict PARTIEL avec les constats restants.
+Deux corrections au plus par tentative. Dès qu'une relecture de correction rend `NON CORRIGÉS : <n>`
+avec au moins un constat non corrigé, rends PARTIEL avec ce constat et le chemin du rapport dans
+`reste`, sans renvoyer la même correction à l'implémenteur : la boucle passe au palier suivant.
+Une ligne absente ou illisible compte comme un constat non corrigé. Même avec `NON CORRIGÉS : 0`,
+une deuxième correction refusée donne PARTIEL avec les constats restants : aucune troisième correction.
 
 ## 7. Laisser une trace
 

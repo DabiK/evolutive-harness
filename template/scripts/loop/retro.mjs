@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 // Rétrospective d'un ticket : après l'intégration ou le blocage, une courte session en lecture seule relit ce
 // que la boucle a observé et propose des améliorations du harnais. Les propositions s'accumulent dans un
-// journal ; le propriétaire les tranche après un lot de tickets.
+// journal ; le propriétaire les tranche après un lot de tickets. L'harmonisation des consignes (tune.mjs) marque
+// `harmonisation:<commit>` celles qu'elle a traitées dans les skills et les agents, et `differee:<H…>` celles qu'elle
+// laisse au propriétaire.
 //
-//   node scripts/loop/retro.mjs liste [--tous]                   propositions à trancher, groupées par cible
-//   node scripts/loop/retro.mjs decider <id> accepte|refuse|ticket:T012 [note]
+//   node scripts/loop/retro.mjs liste [--tous]      propositions à trancher (ouvertes ou différées), groupées par cible
+//   node scripts/loop/retro.mjs decider <id> accepte|refuse|ticket:T012|harmonisation:<commit>|differee:H001 [note]
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -65,12 +67,14 @@ export function digest(root, ticket, dir, { outcome, reason, history }) {
     lines.push(`## Tentative ${attempt}`, "");
     const model = `modèle ${plan.modele || "par défaut"}, effort ${plan.effort || "par défaut"}`;
     lines.push(`- Niveau ${plan.niveau}, ${model}, relecteur ${plan.relecteur || "hérité"}`);
-    lines.push(`- ${report.tours ?? "?"} tours, ${report.duree_s ?? "?"} s, ${usd(report.cout_usd)}, ${report.compactions} compaction(s)`);
+    const compactions = Number.isFinite(report.compactions) ? `, ${report.compactions} compaction(s)` : "";
+    lines.push(`- ${report.tours ?? "?"} tours, ${report.duree_s ?? "?"} s, ${usd(report.cout_usd)}${compactions}`);
     for (const agent of report.sous_agents || []) {
       lines.push(`- Sous-agent ${agent.role} (${agent.modele}) : ${agent.tokens} tokens, ${agent.outils} outils, ${Math.round(agent.duree_ms / 1000)} s`);
     }
     for (const denial of report.refus || []) lines.push(`- Refus de permission : ${denial}`);
-    lines.push(`- Flux complet : ${rel(path.join(dir, `session-${attempt}.jsonl`))}`);
+    const stream = report.moteur === "codex" ? "codex" : "session";
+    lines.push(`- Flux complet : ${rel(path.join(dir, `${stream}-${attempt}.jsonl`))}`);
     if (failure) lines.push("", "Refus de la boucle :", "", "```", failure.trim(), "```");
     lines.push("");
   }
@@ -130,8 +134,11 @@ export function runRetro(root, ticket, dir, run, options = {}) {
 
 const ORDER = Object.fromEntries(IMPACTS.map((impact, i) => [impact, i]));
 
+/** Différée par une harmonisation : elle attend une décision du propriétaire, mais la sélection ne la reprend plus. */
+const DEFERRED = /^differee:/;
+
 function listCommand(root, all) {
-  const entries = readJournal(root).filter((e) => all || e.statut === "propose");
+  const entries = all ? readJournal(root) : readJournal(root).filter((e) => e.statut === "propose" || DEFERRED.test(e.statut));
   if (!entries.length) return console.log(all ? "Aucune observation." : "Aucune proposition à trancher.");
   for (const target of TARGETS) {
     const group = entries.filter((e) => e.cible === target).sort((a, b) => ORDER[a.impact] - ORDER[b.impact]);
@@ -144,19 +151,43 @@ function listCommand(root, all) {
   }
 }
 
+/**
+ * Décisions possibles : `harmonisation:<commit>` marque une observation traitée par une harmonisation des consignes,
+ * `differee:<H…>` une observation que cette harmonisation a laissée au propriétaire.
+ */
+const DECISION = /^(accepte|refuse|ticket:T\d+|harmonisation:[0-9a-f]{7,40}|differee:H\d+)$/;
+const DECIDE_USAGE = "decider <id> accepte|refuse|ticket:T012|harmonisation:<commit>|differee:H001 [note]";
+
+/** Les observations encore à trancher (`statut: propose`), dans l'ordre du journal. */
+export function pendingObservations(root) {
+  return readJournal(root).filter((e) => e.statut === "propose");
+}
+
+/**
+ * Tranche des observations du journal. Renvoie `{ decided }`, ou `{ error }` sans rien écrire :
+ * `invalid-decision`, ou `unknown-observation` avec les identifiants absents du journal (`unknown`).
+ */
+export function decide(root, ids, decision, note = "") {
+  if (!DECISION.test(decision || "")) return { error: "invalid-decision" };
+  const journal = readJournal(root);
+  const unknown = ids.filter((id) => !journal.some((e) => e.id === id));
+  if (unknown.length) return { error: "unknown-observation", unknown };
+  const at = new Date().toISOString();
+  for (const entry of journal.filter((e) => ids.includes(e.id))) Object.assign(entry, { statut: decision, decide_le: at, note: note || undefined });
+  writeJournal(root, journal);
+  return { decided: ids };
+}
+
 function decideCommand(root, [id, decision, ...note]) {
-  if (!id || !/^(accepte|refuse|ticket:T\d+)$/.test(decision || "")) {
-    console.error("Usage : node scripts/loop/retro.mjs decider <id> accepte|refuse|ticket:T012 [note]");
+  const result = id ? decide(root, [id], decision, note.join(" ")) : { error: "invalid-decision" };
+  if (result.error === "invalid-decision") {
+    console.error(`Usage : node scripts/loop/retro.mjs ${DECIDE_USAGE}`);
     process.exit(2);
   }
-  const journal = readJournal(root);
-  const entry = journal.find((e) => e.id === id);
-  if (!entry) {
+  if (result.error) {
     console.error(`Observation inconnue : ${id}.`);
     process.exit(2);
   }
-  Object.assign(entry, { statut: decision, decide_le: new Date().toISOString(), note: note.join(" ") || undefined });
-  writeJournal(root, journal);
   console.log(`${id} : ${decision}.`);
 }
 
@@ -164,7 +195,7 @@ function main(argv) {
   const root = process.cwd();
   if (argv[0] === "liste") return listCommand(root, argv.includes("--tous"));
   if (argv[0] === "decider") return decideCommand(root, argv.slice(1));
-  console.error("Usage : node scripts/loop/retro.mjs liste [--tous] | decider <id> accepte|refuse|ticket:T012 [note]");
+  console.error(`Usage : node scripts/loop/retro.mjs liste [--tous] | ${DECIDE_USAGE}`);
   process.exit(2);
 }
 

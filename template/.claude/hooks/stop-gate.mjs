@@ -5,7 +5,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { block, loopMode, projectDir, readInput, stateDir } from "./lib.mjs";
+import { block, loopMode, projectDir, readInput, stateDir, ticketSkill } from "./lib.mjs";
 
 const MAX_BLOCKS = 2;
 const VERDICTS = ["TERMINÉ", "PARTIEL", "BLOQUÉ"];
@@ -56,7 +56,8 @@ try {
   verdict = null;
 }
 if (!verdict || !VERDICTS.includes(verdict.statut)) {
-  const expected = `"statut" (${VERDICTS.join(", ")}) et "resume", comme le décrit la skill ticket`;
+  const skill = ticketSkill();
+  const expected = `"statut" (${VERDICTS.join(", ")}) et "resume", comme le décrit la skill ${skill}`;
   refuse(`Aucun verdict pour ${ticket}. Écris .harness-state/tickets/${ticket}/verdict.json avec ${expected}.`);
 }
 if (verdict.statut === "TERMINÉ") {

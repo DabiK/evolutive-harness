@@ -58,3 +58,14 @@ Mesures du noyau : `lignes_longues_prod`, `lignes_longues_tests`, `catch_vides_p
 `harness.config.mjs` (`measures`), puis entre au plancher par `node scripts/quality/ratchet.mjs --tighten`.
 Une règle relue qui revient souvent en relecture gagne à devenir une mesure : c'est ainsi que le
 harnais se resserre avec le projet.
+
+Une mesure du plancher que ni le noyau ni `harness.config.mjs` ne déclarent rend le cliquet rouge : une
+mesure retirée de la configuration se retire aussi du plancher, explicitement, dans le même changement.
+
+## Le gel du lint
+
+Quand le projet installe ESLint, ses infractions existantes peuvent être gelées par fichier et par règle
+dans `eslint-suppressions.json` (`eslint --suppress-all`). Le contrôle refuse toute hausse du gel par
+rapport au dernier commit, même sans ESLint installé : aucun compteur ne monte, aucun couple fichier et
+règle n'apparaît. Une infraction gelée se corrige, puis `eslint --prune-suppressions` retire sa
+suppression dans le même ticket. Les réglages du lint et du format font partie du harnais protégé.

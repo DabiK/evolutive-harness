@@ -1,0 +1,192 @@
+[
+  {
+    "file": "lint-comments.md",
+    "findings": [
+      [
+        "3. Consignes `decoupage/SKILL.md`, `CLAUDE.md`, `implementeur.md` (hors périmètre) : toujours une réserve",
+        "- Le constat ne demandait pas de correction dans ce ticket, et la correction ne touche pas ces fichiers. Il reste valable, à reporter en réserve."
+      ],
+      [
+        "A. `scripts/check.mjs:106-112` (hors périmètre, code que la correction n'a pas touché)",
+        "- **Problème :** dans `suppressionIncreases`, le paramètre `before` désigne l'objet du gel de HEAD. À la ligne 112, la clé `before` de chaque hausse renvoyée est un nombre. C'est le même motif que le constat 2, en plus léger : ici il s'agit d'une clé de propriété, pas d'une variable redéclarée.",
+        "- **Attendu :** renommer les paramètres, par exemple `headFreeze` et `treeFreeze`, comme dans `lintFreeze`. Les clés `before` et `now` du résultat restent telles quelles : `ratchet` utilise la même forme. Comme la correction n'a pas touché cette fonction, c'est une réserve."
+      ]
+    ],
+    "deviations": []
+  },
+  {
+    "file": "state-views.md",
+    "findings": [
+      [
+        "**1. `runtime/state-views.cjs:37-38` (hors périmètre)**",
+        "- **Problème :** `refusal` est un constructeur d'erreur générique. Il sert aussi aux refus de l'hôte qui ne concernent pas les vues, et il vit pourtant dans le module des vues.",
+        "- **Suite possible :** un module d'erreurs de transport dédié, que le ticket ne prévoit pas."
+      ],
+      [
+        "**2. `runtime/state-views.cjs:285` et la vue `snapshot` de `runtime/headless-runtime.cjs` (hors périmètre)**",
+        "- **Problème :** la langue par défaut `\"fr\"` est écrite à deux endroits. Les standards veulent qu'une constante vive à un seul endroit.",
+        "- **Pourquoi hors périmètre :** `snapshot` reste dans l'hôte, comme le ticket le prévoit."
+      ]
+    ],
+    "deviations": [
+      [
+        "**Écart accepté, `refusal` déplacé dans le module (déclaré dans `ecarts.md`) :** même décision qu'à la relecture 1, et pour la même raison. `surveillanceHistory` et `surveillanceDetail`, que le ticket ordonne de déplacer, ont besoin de `refusal`. Le laisser dans l'hôte aurait obligé à le recopier. Le problème de cohésion reste en réserve 1."
+      ]
+    ]
+  },
+  {
+    "file": "session-rows.md",
+    "findings": [
+      [
+        "1. `app/main.cjs:344-373`, `sessionRows` (hors périmètre, repris de la relecture 1)",
+        "- **Problème :** le bug existait avant le refactor. `sessions:list` ne passe pas par `exclusive`. Si une fin de session remet `loaded` à `null` pendant `await library.list(...)`, `sessions.map(...)` lit `loaded.runtime.readOnly` et lève une `TypeError`.",
+        "- **Attendu :** un ticket ultérieur, qui capture la session avant l'`await` ou rend la lecture sûre après. Le ticket interdit tout changement de comportement."
+      ],
+      [
+        "2. Critère 4, couverture des lectures tardives (hors périmètre, repris de la relecture 1)",
+        "- **Problème :** la seule lecture figée dont on sait que les tests la voient est celle de `sessionState` (`tests/mac-ipc-contract.test.cjs:280`). On ne sait pas si les tests verraient une lecture figée ailleurs : les deux `getSession`, `getInstruction`, le microtask `drain`, le titre dans `compose.onChange`, `sweep` et `sessionRows`.",
+        "- **Attendu :** une réserve pour le propriétaire, à examiner avant T149 et T150. Le ticket interdit d'ajouter des tests."
+      ]
+    ],
+    "deviations": [
+      [
+        "**Écart accepté, critère 1.** La commande du critère rend une ligne, `506:    let archive = id === loaded?.runtime.watch.id ? …`, alors que le critère attend une sortie vide.",
+        "- **La ligne rendue :** `grep -w` y reconnaît `watch` dans une lecture de propriété. Le seul nom déclaré sur cette ligne est `archive`.",
+        "- **Le fond est tenu :** aucun des neuf noms n'est une liaison `let`.",
+        "- **Cette ligne était prévisible :** elle apparaissait déjà, en lecture, dans `declarations-before.log`.",
+        "- **Pourquoi l'accepter :** refuser l'écart pousserait à remodeler le code pour satisfaire la commande, ce que la relecture 1 a justement reproché.",
+        "- **La déclaration :** l'écart est fait dans `ecarts.md`, avec la sortie réelle conservée (`correction-1-declarations.log`).",
+        "",
+        "Il n'y a aucune contestation à trancher : `ecarts.md` dit qu'il ne conteste pas le constat 1."
+      ]
+    ]
+  },
+  {
+    "file": "browser-capture.md",
+    "findings": [
+      [
+        "1. `app/recording.js:17-24` : hors périmètre (reporté de la relecture 2, constat 2)",
+        "**Problème.** La composition navigateur passe toujours un `env` explicite (`app/ui/browser-capture.mjs:28-35`). La valeur par défaut de `RollingRecorder` (les globaux et `window.tvlens.ingest`) ne sert donc plus en production. Le branchement de l'ingestion existe à deux endroits.",
+        "",
+        "**Attendu.** Un ticket ultérieur retire cette valeur par défaut ou l'aligne. Ce ticket demande de conserver `recording.js` et ses scénarios."
+      ],
+      [
+        "2. `docs/adr/0018-un-controleur-injecte-possede-la-capture-du-mac.md:22`, `:82` : hors périmètre (reporté des relectures 1 et 2)",
+        "**Problème.** L'ADR cite toujours `openCapture` comme commande publique. Il mentionne aussi l'ancienne protection textuelle de `mac-ui`.",
+        "",
+        "**Attendu.** Une mise à jour de l'ADR, dans un autre ticket : celui-ci est en `adr: non`."
+      ]
+    ],
+    "deviations": [
+      [
+        "**Écart accepté, relecture 2** (`ecarts.md`, section « Relecture 2 ») : aucun critère n'est affaibli. Il complète le test de composition existant avec des dépendances de temps et de média simulées, et ne laisse aucun changement de production. C'est ce que montre l'interdiff."
+      ]
+    ]
+  },
+  {
+    "file": "session-lifecycle.md",
+    "findings": [
+      [
+        "`runtime/session-lifecycle.cjs:1` et `:55-63` (hors périmètre)",
+        "",
+        "C'est la réserve n° 3 de la relecture 1, toujours valable. `CLOSE_ERROR_MAX_CHARS = 200` et la mise en forme `étape : message` reprennent `said` et `attempt` de `runtime/session-closing.cjs`. Le standard « une constante vit à un seul endroit » n'est donc pas tenu.",
+        "",
+        "Ce n'est pas un défaut de ce ticket : la duplication existait déjà et le ticket interdit de modifier `session-closing.cjs`.",
+        "",
+        "**Ce qui est attendu :** donner plus tard un seul emplacement à cette borne et à cette mise en forme. À garder en réserve, comme l'indique déjà `ecarts.md`."
+      ]
+    ],
+    "deviations": []
+  },
+  {
+    "file": "route-architecture.md",
+    "findings": [
+      [
+        "1. Garde d'architecture limitée à `server/http.cjs` (`hors périmètre`)",
+        "",
+        "- **Où :** `tests/architecture-f07.test.cjs:581`. Constat repris de la relecture 1, dans un code que la correction n'a pas touché.",
+        "- **Ce qui ne va pas :** la garde qui vérifie qu'un message de fin de session n'est écrit qu'à un seul endroit ne lit, côté serveur, que `server/http.cjs`. Les nouveaux fichiers `server/*-routes.cjs` y échappent. La garde reste vraie aujourd'hui.",
+        "- **Attendu :** l'étendre aux modules de routes dans un ticket séparé. Le ticket T174 interdit de modifier cette suite.",
+        "- **Statut :** déjà consigné en réserve dans `verdict.json` (`reste`)."
+      ]
+    ],
+    "deviations": [
+      [
+        "**Écart accepté, `eslint-suppressions.json` (élagage, sans numéro de critère).** Décision inchangée depuis la relecture 1 : `docs/standards.md` impose de retirer une suppression devenue inutile, et aucun gel n'est ajouté."
+      ]
+    ]
+  },
+  {
+    "file": "surveillance-tick.md",
+    "findings": [
+      [
+        "`app/main.cjs:184` : `hors périmètre`",
+        "",
+        "- **Ce qui ne va pas :** le tick de surveillance de l'hôte Mac n'a aucune protection. Une exception du cœur y devient une exception non interceptée du processus principal. L'hôte headless, lui, l'absorbe.",
+        "- **Attendu :** le ticket qui définira le contrat de reprise d'un tick partiel traite les deux hôtes de la même façon. Ce n'est pas un `catch` vide, donc rien à faire dans T177."
+      ]
+    ],
+    "deviations": []
+  },
+  {
+    "file": "capture-gate.md",
+    "findings": [
+      [
+        "1. Fixture de gate restante dans le test du contrôleur (hors périmètre, réserve reconduite)",
+        "",
+        "**Où :** `tests/test_tv_control.py:167-186`.",
+        "",
+        "**Ce qui ne va pas.** `test_startup_and_shutdown_launch_no_background_work` écrit encore `tvlens-ambient-gate.json` et `ambient.json`, règle `TVLENS_AMBIENT_RUN`, puis vérifie que le contrôleur ne modifie pas le gate. Le gate est désormais retiré de la capture, donc ce test d'absence n'a plus d'objet. Ni T181 ni T182 ne le prévoient.",
+        "",
+        "**Attendu.** Le traiter dans un ticket ultérieur. La réserve figure déjà dans `reste` de `verdict.json`, et le fichier n'a pas changé (`git diff --exit-code -- tests/test_tv_control.py` rend 0, consigné dans `correction-1-static.log`)."
+      ]
+    ],
+    "deviations": []
+  },
+  {
+    "file": "overlay-reserves.md",
+    "findings": [
+      [
+        "**4. `tv/app/surveillance-overlay.js:286`** — hors périmètre",
+        "- `OverlayQueue.prototype.seen` n'a plus d'appelant en production.",
+        "- Le ticket et l'ADR 0017 imposent de conserver la file et ses tests.",
+        "- Attendu : le traiter avec le retrait différé de l'API overlay."
+      ],
+      [
+        "**5. `docs/README.md:13`** — hors périmètre",
+        "- L'index présente encore `lg-ambient.md` comme « Code livré, affichage désactivé par défaut ».",
+        "- Ce fichier ne figure pas parmi les cinq documents que le ticket énumère.",
+        "- Attendu : un ticket documentaire."
+      ],
+      [
+        "**6. `runtime/headless-runtime.cjs:344`, `runtime/state-views.cjs:322`, `tests/server-surveillance.test.cjs:126`** — hors périmètre",
+        "- Ces commentaires nomment encore l'affichage ambient comme consommateur de l'API overlay.",
+        "- Le ticket interdit de toucher la projection runtime.",
+        "- Attendu : les reprendre avec le retrait différé (ADR 0017)."
+      ],
+      [
+        "**7. `tests/tv-paired-page.test.cjs:46` et `:58`** — hors périmètre",
+        "- Le mock `network()` répond encore 200 sur `/ambient`, et le premier cas appairé filtre ces appels.",
+        "- Le ticket impose de garder les cas appairés déjà livrés.",
+        "- L'absence d'appel est prouvée par le cas `:275`."
+      ]
+    ],
+    "deviations": []
+  },
+  {
+    "file": "latency-reserves.md",
+    "findings": [
+      [
+        "1. `tests/capture-display-latency.test.cjs:104-122` — hors périmètre (réserve maintenue)",
+        "- **Problème.** `deliveryMs: 65` et l'écart attendu `50` reposent toujours, sans le dire, sur `DEFAULT_DELAYS.deliveryMs = 15`. La correction n'a pas touché ce code.",
+        "- **Attendu :** écrire `DEFAULT_DELAYS.deliveryMs + addedDeliveryMs`, comme dans le test de réponse."
+      ],
+      [
+        "2. `app/main.cjs:147-154` et `runtime/headless-runtime.cjs:120-131` — hors périmètre (réserve maintenue)",
+        "- **Problème.** La règle « question occupée → `asking` » existe en deux exemplaires dans les hôtes, et en troisième dans le banc (`scripts/latency-model.cjs:93-103`).",
+        "- **Attendu :** l'extraire dans `runtime/` par un ticket dédié."
+      ]
+    ],
+    "deviations": []
+  }
+]

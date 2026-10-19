@@ -4,13 +4,16 @@
 
 <Une phrase : ce que fait le projet et pour qui.> Présentation dans `README.md`.
 
+Ces consignes valent aussi pour Codex : `AGENTS.md` est un lien vers ce fichier.
+
 ## Avant de modifier du code
 
 1. Lis `docs/standards.md` : ce sont les règles, et la plupart sont vérifiées par une machine.
 2. Lis le code que tu vas toucher en entier, ses appelants et ses tests. Lis les ADR de `docs/adr/` qui
    concernent la zone.
-3. Pour traiter un ticket de `docs/travail/tickets/`, suis la skill `ticket`. Pour en écrire, la skill
-   `decoupage`. Pour écrire un test, la skill `tests`.
+3. Pour traiter un ticket de `docs/travail/tickets/`, une session Claude suit la skill `ticket` ; une
+   session Codex suit `.agents/skills/ticket-codex/SKILL.md`. Pour en écrire, la skill `decoupage`.
+   Pour écrire un test, la skill `tests`.
 
 ## Frontières
 
