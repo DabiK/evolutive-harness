@@ -77,6 +77,38 @@ test("installing links AGENTS.md to the project's CLAUDE.md and brings the Codex
   }
 });
 
+test("installing brings the OpenCode engine: its plugin, its loop agent, its skill and its loop modules, all locked", (t) => {
+  const env = setup(t);
+  const result = env.run();
+  assert.equal(result.code, 0, result.out);
+  const lock = JSON.parse(env.read(env.project, ".claude/harness.lock.json"));
+  for (const rel of [
+    ".opencode/plugins/harness.js", ".opencode/agents/ticket-opencode.md", ".agents/skills/ticket-opencode/SKILL.md",
+    "scripts/loop/opencode.mjs", "scripts/loop/opencode-stream.mjs", "scripts/loop/claude-review.mjs",
+  ]) {
+    assert.equal(env.read(env.project, rel), env.read(env.template, rel), rel);
+    assert.ok(lock.files[rel], rel);
+  }
+});
+
+test("an update brings the OpenCode files to a project installed before them, and keeps the project's own OpenCode config", (t) => {
+  const env = setup(t);
+  assert.equal(env.run().code, 0);
+  const lockFile = path.join(env.project, ".claude/harness.lock.json");
+  const lock = JSON.parse(fs.readFileSync(lockFile, "utf8"));
+  for (const rel of [".opencode/plugins/harness.js", ".opencode/agents/ticket-opencode.md"]) {
+    fs.rmSync(path.join(env.project, rel));
+    delete lock.files[rel];
+  }
+  fs.writeFileSync(lockFile, JSON.stringify(lock, null, 2) + "\n");
+  env.write(env.project, ".opencode/opencode.jsonc", "{ \"theme\": \"own\" }\n");
+  const updated = env.run("--update");
+  assert.equal(updated.code, 0, updated.out);
+  assert.match(updated.out, /ajouté \.opencode\/plugins\/harness\.js/);
+  assert.match(updated.out, /ajouté \.opencode\/agents\/ticket-opencode\.md/);
+  assert.equal(env.read(env.project, ".opencode/opencode.jsonc"), "{ \"theme\": \"own\" }\n");
+});
+
 test("an update adds the AGENTS.md link only where the project has none, and keeps the project's own", (t) => {
   const env = setup(t);
   assert.equal(env.run().code, 0);

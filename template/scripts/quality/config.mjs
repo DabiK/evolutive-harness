@@ -25,7 +25,8 @@ export const DEFAULTS = {
   suites: [],
   // Mesures propres au projet, ajoutées à celles du cliquet.
   measures: {},
-  // Échelle de modèles de la boucle, niveaux de ticket et modèle de la rétrospective (scripts/loop/models.mjs).
+  // Échelles de modèles de la boucle (Claude, Codex, OpenCode), niveaux de ticket et modèle de la rétrospective
+  // (scripts/loop/models.mjs).
   models: {},
 };
 

@@ -7,7 +7,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const SOURCE = path.join(__dirname, "..", "..", "..");
-const HARNESS = ["scripts/check.mjs", "scripts/quality", "scripts/loop", ".claude/hooks"];
+const HARNESS = ["scripts/check.mjs", "scripts/quality", "scripts/loop", ".claude/hooks", ".opencode"];
 // Configuration du dépôt jetable : trois dossiers de production, une suite de tests et deux mesures propres au projet.
 const CONFIG = String.raw`export default {
   project: "Exemple",

@@ -2,6 +2,46 @@
 
 Ce que chaque version change pour un projet qui lance `node install.mjs <projet> --update`.
 
+## 0.3.0 — 2026-10-19
+
+Un troisième moteur pour la boucle : OpenCode (version 2, relevée sur 2.0.22), pour confier des tickets à
+DeepSeek. Ce que `--update` apporte au projet :
+
+- **Moteur OpenCode.** `node scripts/loop/run.mjs --engine opencode` : OpenCode explore et implémente en
+  suivant `.agents/skills/ticket-opencode/SKILL.md`, avec l'agent `.opencode/agents/ticket-opencode.md`
+  (sous-agents, questions et mode code fermés) ; la boucle fait relire par Claude comme pour Codex. Chaque
+  tentative est une session `opencode run --standalone --format json`, consigne sur l'entrée standard,
+  configuration personnelle écartée (`OPENCODE_CONFIG_DIR` vide) ; la boucle la reprend par `--session`
+  après un refus de fin (`stop-gate.mjs`, appelé par la boucle) ou une relecture à corriger, avec repli
+  sur une session neuve. Coût et jetons lus dans `opencode session export`. Signature
+  `Co-Authored-By: OpenCode (<modèle>) <noreply@opencode.ai>`.
+- **Plugin des garde-fous.** `.opencode/plugins/harness.js` branche les scripts de `.claude/hooks/` sur
+  OpenCode : `guard-write` et `guard-bash` avant `write`, `edit`, `patch` et `shell` (refus par
+  l'évaluation des permissions, lu par le modèle comme une erreur de l'outil), `after-edit` après une
+  édition, `session-context` au premier message (contexte et témoin de démarrage, exigé par la boucle),
+  `record-compaction` à la compaction. Un garde-fou qui ne peut pas tourner refuse l'appel en boucle.
+- **Échelle OpenCode** dans `scripts/loop/models.mjs` : DeepSeek V4.1 Flash (`opencode-go/deepseek-v4.1-flash`,
+  variantes high puis max), puis DeepSeek V4 Pro (high, max). Remplaçable par `models.opencodeLadder`
+  dans `harness.config.mjs` ; `effort` y est la variante du modèle.
+- **Relecture Claude partagée.** La relecture, les relectures de correction et l'extraction des réserves
+  quittent `codex.mjs` pour `scripts/loop/claude-review.mjs`, commun à Codex et OpenCode ; le
+  comportement de Codex ne change pas.
+- **Garde-fous.** `.opencode/` rejoint le harnais protégé ; une session de ticket ne lance pas `opencode`.
+  Le contexte et le refus de fin nomment la skill du moteur déclaré par `HARNESS_ENGINE`.
+- **Variables d'environnement** nouvelles : `HARNESS_OPENCODE_BIN` ; `HARNESS_ENGINE` vaut aussi `opencode`.
+
+À faire à la main, car `--update` ne touche pas aux fichiers du projet :
+
+1. Régler une fois les identifiants du fournisseur : `opencode auth login` (OpenCode Go pour l'échelle
+   par défaut), puis `opencode auth list`.
+2. Dans `CLAUDE.md`, étape « Avant de modifier du code » : une session OpenCode suit
+   `.agents/skills/ticket-opencode/SKILL.md` (voir `template/CLAUDE.md`).
+3. Si le projet utilise d'autres modèles OpenCode, déclarer `models.opencodeLadder` dans
+   `harness.config.mjs` (exemple commenté dans `template/harness.config.mjs`).
+
+Pas pris en charge : la reconnaissance du quota et de la saturation d'un fournisseur OpenCode (ils
+refusent la tentative comme une autre erreur) et `--fallback-engine` avec OpenCode.
+
 ## 0.2.0 — 2026-10-19
 
 Rattrapage du harnais de TVLens jusqu'au commit `b893bae` (tickets T154 à T292 qui touchent au harnais),

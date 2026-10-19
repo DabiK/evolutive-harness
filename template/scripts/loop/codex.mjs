@@ -6,12 +6,11 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { retryCapacity } from "./codex-capacity.mjs";
 import { MAX_DIAGNOSTIC_LENGTH, sessionState, streamSession } from "./codex-stream.mjs";
-import { lastReviewReport, record, recordReview, reviewVerdict, uncorrectedFindings } from "./reviewed-state.mjs";
+import { reviewAndCorrect } from "./claude-review.mjs";
 
 const MS_PER_SECOND = 1000;
 const SECONDS_PER_MINUTE = 60;
-const MAX_REVIEW_OUTPUT = 64 * 1024 * 1024;
-const MAX_CORRECTIONS = 2;
+const CODEX_SKILL = ".agents/skills/ticket-codex/SKILL.md";
 const DISABLED_FEATURES = ["plugins", "apps", "memories", "image_generation"];
 const DEFAULT_DISCOVERY_TIMEOUT_MS = SECONDS_PER_MINUTE * MS_PER_SECOND;
 
@@ -207,149 +206,13 @@ async function correctionSession(root, request, env, file, state, timeoutMs, sta
   return fresh.code;
 }
 
-function reviewRequest(root, ticket, dir, correction) {
-  const previousReport = correction ? lastReviewReport(dir) : null;
-  const snapshot = record(root, ticket);
-  if (snapshot.problem) return { problem: snapshot.problem };
-  const files = snapshot.written.slice(0, 2).map((file) => path.relative(root, file));
-  let prompt = `Relis le ticket ${ticket.id} (${ticket.file}), ${files.join(" et ")}` +
-    ` et, s'il existe, ${path.relative(root, path.join(dir, "ecarts.md"))}.`;
-  if (correction) {
-    const previous = path.relative(root, path.join(dir, previousReport));
-    const interdiffFile = snapshot.written.find((file) => file.endsWith(".interdiff"));
-    if (!interdiffFile) {
-      const state = path.relative(root, path.join(dir, "reviewed-state.json"));
-      return { problem: `Relecture de correction impossible : interdiff absent après reconstruction de ${state}. La tentative est refusée.` };
-    }
-    const interdiff = path.relative(root, interdiffFile);
-    prompt += ` Fais une relecture de correction contre ${previous} et ${interdiff}, selon la section correspondante de tes consignes.`;
-  }
-  return { prompt };
-}
-
-function review(root, ticket, dir, env, step, timeoutMs, correction) {
-  const request = reviewRequest(root, ticket, dir, correction);
-  if (request.problem) return request;
-  const { prompt } = request;
-  const args = ["-p", prompt, "--agent", "relecteur", "--model", step.relecteur, "--output-format", "json", "--strict-mcp-config"];
-  const reviewEnv = { ...env };
-  // Les hooks de ticket exigeraient du relecteur un verdict d'implémentation et remplaceraient son rapport.
-  delete reviewEnv.HARNESS_LOOP;
-  delete reviewEnv.HARNESS_ENGINE;
-  const result = spawnSync(process.env.HARNESS_CLAUDE_BIN || "claude", args, {
-    cwd: root, env: reviewEnv, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: timeoutMs, maxBuffer: MAX_REVIEW_OUTPUT,
-  });
-  let report;
-  let failed = result.status !== 0;
-  try {
-    const output = JSON.parse(result.stdout);
-    report = typeof output.result === "string" ? output.result : "";
-    failed ||= Boolean(output.is_error);
-    if (failed) report = `Relecteur en échec : ${result.stderr || ""}\n${report}`;
-  } catch (error) {
-    // Un processus interrompu ou une sortie non JSON ne peut jamais accepter une revue.
-    report = `Relecteur illisible : ${result.error?.message || result.stderr || result.stdout || error.message}`;
-    failed = true;
-  }
-  const uncorrected = correction ? uncorrectedFindings(report) : 0;
-  let verdict = failed ? "illisible" : reviewVerdict(report);
-  if (!failed && uncorrected > 0) verdict = "à corriger";
-  recordReview(root, ticket.id, { verdict, modele: step.relecteur, report });
-  return { verdict, report, uncorrected };
-}
-
-function sessionVerdict(dir) {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(dir, "verdict.json"), "utf8"));
-  } catch (error) {
-    // Un arrêt sans verdict lisible ne peut pas déclencher une relecture du changement.
-    return null;
-  }
-}
-
-function locations(text) {
-  return text.match(/[^\s`]+:\d+/gu) || [];
-}
-
-function findingForm(line, section, current) {
-  if (/^#{1,2}\s+/u.test(line)) return (/^#{1,2}\s+\d+[.)]\s+/u.test(line) || locations(line).length > 0) && "title";
-  if (/^(?:#{3,6}\s+|\*\*(?:\d+[.)]\s+|constat\s+\d+\b))/iu.test(line)) return "title";
-  if (/^\d+[.)]\s+/u.test(line)) return (!current || current.form === "numbered") && "numbered";
-  const bullet = /^[-*+]\s+(.+)$/u.exec(line)?.[1];
-  if (!bullet || (current && current.form !== "bullet")) return false;
-  const located = locations(bullet).some(ref => bullet.replace(/^`/u, "").startsWith(ref));
-  if (located || /^(?:\(\d+\)\s+|hors\s+périmètre\b)/iu.test(bullet)) return "bullet";
-  if (!current && /^\*\*[^*:]+\*\*(?:\s|$)/u.test(bullet)) return "title";
-  return section === "reserves" && !current && "bullet";
-}
-
-function reviewSection(title) {
-  if (/^(?:\d+[.)]\s+|constat\s+\d+\b)/iu.test(title)) return null;
-  if (/(?:^|\s)[ée]carts\b/iu.test(title)) return "deviations";
-  if (/^réserves(?:\s+hors\s+périmètre|$)/iu.test(title)) return "reserves";
-  if (/^(?:suivi|synthèse|critères|régressions|code\s+changé)\b/iu.test(title)) return "other";
-  if (/^constats?\s+du\s+rapport\s+précédent\b/iu.test(title)) return "tracking";
-  if (/constats?\b/iu.test(title) && !/de\s+la\s+relecture/iu.test(title)) return "findings";
-  return null;
-}
-
-/** Les champs et paragraphes restent attachés au titre, même si le repère est dans le corps. */
-function reviewBlocks(report) {
-  const blocks = [];
-  let section = "findings";
-  let current = null;
-  for (const line of report.replace(/\r\n/g, "\n").split("\n")) {
-    if (/^\s*(?:VERDICT|CONSTATS|NON CORRIGÉS)\s*:/iu.test(line)) continue;
-    const heading = /^#{1,6}\s+(.+)$/u.exec(line);
-    const nextSection = heading && reviewSection(heading[1]);
-    const title = line.replace(/^(?:#{1,6}|[-*+]|\d+[.)])\s+/u, "");
-    const deviation = section !== "other" && /^(?:\*\*)?[ée]carts?\s+acceptés?(?!\p{L})/iu.test(title);
-    const form = !nextSection && ["findings", "tracking", "reserves"].includes(section) && findingForm(line, section, current);
-    if (deviation || form) {
-      current = {
-        kind: deviation ? "deviation" : "finding", form, tracking: section === "tracking", listed: /^[-*+]\s/u.test(line), lines: [title],
-      };
-      blocks.push(current);
-    } else if (heading) {
-      current = null;
-      section = nextSection || "other";
-    } else if (current?.kind === "deviation" && current.listed && /^(?:[-*+]|\d+[.)])\s/u.test(line)) {
-      current = null;
-    } else if (current) {
-      current.lines.push(line);
-    }
-  }
-  return blocks.map(({ kind, tracking, lines }) => ({ kind, tracking, text: lines.join("\n").trim() }));
-}
-
-function outOfScopeFindings(blocks) {
-  const findings = blocks.filter(block => block.kind === "finding" && /hors\s+périmètre/iu.test(block.text));
-  const references = findings.filter(block => !block.tracking).flatMap(block => locations(block.text));
-  // Un suivi peut rappeler un constat développé plus loin ; seule sa version complète est transmise.
-  return findings.filter(block => !block.tracking || !locations(block.text).some(ref => references.includes(ref)));
-}
-
-/** Les réserves du rapport accepté restent référencées sans réécrire le verdict ni l'état relu. */
-function reviewReserves(report, reference) {
-  const blocks = reviewBlocks(report);
-  const findings = outOfScopeFindings(blocks);
-  const deviations = blocks.filter((block) => block.kind === "deviation").map((block) => block.text);
-  const expected = Number(/^\s*CONSTATS\s*:.*?(\d+)\s+hors\s+périmètre/imu.exec(report)?.[1]);
-  // Un compte discordant rend l'extraction incertaine : le rapport entier reste la référence des constats.
-  const kept = findings.length === expected ? findings.map((block) => block.text) : [
-    `Nombre de constats discordant : CONSTATS annonce ${expected} hors périmètre ; ${findings.length} constat(s) extrait(s).` +
-    " Consulter le rapport pour l'ensemble des constats hors périmètre.",
-  ];
-  return [...kept, ...deviations].map((text) => `${reference} : ${text}`);
-}
-
 export async function runCodex(root, ticket, attempt, dir, failureReport, step, { event, timeoutMin }) {
   const started = Date.now();
   const timeoutMs = timeoutMin * SECONDS_PER_MINUTE * MS_PER_SECOND;
   const state = { ...sessionState(), invocations: [] };
   const env = sessionEnv(ticket);
   const retry = failureReport ? ` Lis ${path.relative(root, failureReport)} et le journal, puis reprends le travail.` : "";
-  const prompt = `Traite le ticket ${ticket.id} (${ticket.file}) en suivant .agents/skills/ticket-codex/SKILL.md.${retry}`;
+  const prompt = `Traite le ticket ${ticket.id} (${ticket.file}) en suivant ${CODEX_SKILL}.${retry}`;
   event("session", { ticket: ticket.id, attempt, moteur: "codex", ...step });
   const file = path.join(dir, `codex-${attempt}.jsonl`);
   fs.writeFileSync(file, "");
@@ -359,38 +222,15 @@ export async function runCodex(root, ticket, attempt, dir, failureReport, step, 
   };
   const invocationEvent = (phase, data) => event(phase, { ...data, attempt });
   const initial = { step, prompt, reportRecovery, attempt };
-  let { code } = await capacitySession(root, initial, env, file, state, timeoutMs, started, dir, invocationEvent);
-  let relectures = 0;
-  let reserves = [];
-  for (let correction = 0; code === 0; correction++) {
-    if (sessionVerdict(dir)?.statut !== "TERMINÉ") break;
-    const reviewed = review(root, ticket, dir, env, step, timeoutMs, correction > 0);
-    relectures++;
-    if (reviewed.uncorrected > 0) {
-      const reference = path.relative(root, path.join(dir, lastReviewReport(dir)));
-      state.problem = `Un constat non corrigé (ou une ligne NON CORRIGÉS absente ou illisible) dans ${reference}` +
-        ` refuse la tentative : la boucle passe au palier suivant.\n\n${reviewed.report}`;
-      code = 1;
-      break;
-    }
-    if (reviewed.verdict === "accepté") {
-      const reference = path.relative(root, path.join(dir, lastReviewReport(dir)));
-      reserves = reviewReserves(reviewed.report, reference);
-      break;
-    }
-    if (reviewed.problem || correction >= MAX_CORRECTIONS) {
-      state.problem = reviewed.problem || reviewed.report;
-      code = 1;
-      break;
-    }
-    const reportFile = path.relative(root, path.join(dir, lastReviewReport(dir)));
-    const fix = `Reprends le ticket ${ticket.id} (${ticket.file}) en suivant .agents/skills/ticket-codex/SKILL.md.` +
-      ` Lis ${reportFile}, le ticket et son journal, les écarts, git status et git diff, puis reprends le travail présent dans l'arbre.` +
-      ` Corrige chaque constat bloquant et mineur de cette relecture, tests d'abord, puis rends un nouveau verdict.\n\n${reviewed.report}`;
+  const first = await capacitySession(root, initial, env, file, state, timeoutMs, started, dir, invocationEvent);
+  const correct = (prompt) => {
     const fallbackEvent = (phase, data) => event(phase, { ...data, attempt });
-    const request = { step, prompt: fix, session: state.session, reportRecovery, attempt };
-    code = await correctionSession(root, request, env, file, state, timeoutMs, started, dir, fallbackEvent);
-  }
+    const request = { step, prompt, session: state.session, reportRecovery, attempt };
+    return correctionSession(root, request, env, file, state, timeoutMs, started, dir, fallbackEvent);
+  };
+  const reviewed = await reviewAndCorrect({ root, ticket, dir, env, step, timeoutMs, skill: CODEX_SKILL, code: first.code, correct });
+  const { code, relectures, reserves } = reviewed;
+  if (reviewed.problem) state.problem = reviewed.problem;
   const { problem, turnStarted, terminal, ...usage } = state;
   const report = { ...usage, moteur: "codex", duree_s: Math.round((Date.now() - started) / MS_PER_SECOND), relectures, cout_usd: null };
   event("session-terminee", { ticket: ticket.id, attempt, code, ...report });

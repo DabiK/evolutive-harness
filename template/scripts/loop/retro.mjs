@@ -73,7 +73,8 @@ export function digest(root, ticket, dir, { outcome, reason, history }) {
       lines.push(`- Sous-agent ${agent.role} (${agent.modele}) : ${agent.tokens} tokens, ${agent.outils} outils, ${Math.round(agent.duree_ms / 1000)} s`);
     }
     for (const denial of report.refus || []) lines.push(`- Refus de permission : ${denial}`);
-    const stream = report.moteur === "codex" ? "codex" : "session";
+    // Un moteur externe (codex, opencode) garde son flux sous son nom ; Claude sous « session ».
+    const stream = report.moteur && report.moteur !== "claude" ? report.moteur : "session";
     lines.push(`- Flux complet : ${rel(path.join(dir, `${stream}-${attempt}.jsonl`))}`);
     if (failure) lines.push("", "Refus de la boucle :", "", "```", failure.trim(), "```");
     lines.push("");

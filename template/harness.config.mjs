@@ -23,12 +23,17 @@ export default {
     // process_env_hors_config: { pattern: /\bprocess\.env\b/, perFile: true, except: ["src/config.js"], direction: "max" },
   },
 
-  // Échelle de modèles de la boucle, du moins cher au plus fort, et modèle de la rétrospective.
-  // Absente, celle de scripts/loop/models.mjs.
+  // Échelles de modèles de la boucle, du moins cher au plus fort, et modèle de la rétrospective.
+  // Absentes, celles de scripts/loop/models.mjs. `codexLadder` et `opencodeLadder` servent à --engine codex et
+  // --engine opencode ; pour OpenCode, `model` est un identifiant de `opencode models` et `effort` sa variante.
   // models: {
   //   ladder: [
   //     { model: "claude-sonnet-5-5", alias: "sonnet", effort: "high" },
   //     { model: "claude-opus-5-5", alias: "opus", effort: "high" },
+  //   ],
+  //   opencodeLadder: [
+  //     { model: "opencode-go/deepseek-v4.1-flash", effort: "high" },
+  //     { model: "opencode-go/deepseek-v4-pro", effort: "max" },
   //   ],
   //   retro: "claude-sonnet-5-5",
   // },

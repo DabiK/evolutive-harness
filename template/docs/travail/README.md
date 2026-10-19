@@ -39,7 +39,7 @@ node scripts/loop/run.mjs --ticket T012
 | Option | Défaut | Rôle |
 | --- | --- | --- |
 | `--max <n>` | 1 | nombre de tickets à enchaîner |
-| `--engine claude\|codex` | `claude` | moteur de l'exploration et de l'implémentation ; relecteur Claude |
+| `--engine claude\|codex\|opencode` | `claude` | moteur de l'exploration et de l'implémentation ; relecteur Claude |
 | `--fallback-engine claude` | aucun | avec `--engine codex` : une relève Claude après un quota Codex (plus bas) |
 | `--ticket <id>` | prochain prêt | traiter ce ticket précisément |
 | `--attempts <n>` | jusqu'en haut de l'échelle | sessions fraîches par ticket avant de le bloquer (3 avec `--model`) |
@@ -215,6 +215,78 @@ l'état transmis avant de partir : un changement, une absence ou une seconde con
 reprise sans toucher au travail. Une nouvelle relecture après le quota et tous les contrôles habituels
 conditionnent l'intégration.
 
+### Moteur OpenCode
+
+```sh
+node scripts/loop/run.mjs --engine opencode --dry-run
+node scripts/loop/run.mjs --engine opencode --no-push --max 1
+```
+
+OpenCode (version 2, CLI `opencode`) suit `.agents/skills/ticket-opencode/SKILL.md` : comme Codex, il
+explore et implémente lui-même, tests d'abord, déclare ses écarts, tient le journal et écrit son
+verdict ; la boucle enregistre l'état relu, le fait relire par un processus Claude séparé
+(`--agent relecteur`, au modèle Claude du palier) et applique les mêmes contrôles, réserves et
+relectures de correction que pour Codex. La rétrospective et l'harmonisation restent sur Claude.
+
+| Palier | Modèle OpenCode | Variante |
+| --- | --- | --- |
+| 0 | `opencode-go/deepseek-v4.1-flash` | high |
+| 1 | `opencode-go/deepseek-v4.1-flash` | max |
+| 2 | `opencode-go/deepseek-v4-pro` | high |
+| 3 | `opencode-go/deepseek-v4-pro` | max |
+
+C'est l'échelle par défaut de `scripts/loop/models.mjs` ; le projet la remplace dans
+`harness.config.mjs` (`models.opencodeLadder`). `model` est un identifiant que liste `opencode models`
+(`fournisseur/modèle`), `effort` sa variante : la boucle passe `-m <model>#<effort>`. `--model` et
+`--effort` les remplacent, le relecteur reste Claude. Les identifiants du fournisseur se règlent une
+fois, hors de la boucle : `opencode auth login`, puis `opencode auth list` pour vérifier.
+
+Chaque tentative est une session lancée par
+`opencode run --standalone --format json --agent ticket-opencode --title "<projet> <ID> tentative <n>" -m …`.
+`--standalone` donne à la session un serveur privé, enfant de la boucle, qui hérite de ses variables
+`HARNESS_*` : le serveur d'arrière-plan partagé d'OpenCode ne les verrait pas. La consigne passe par
+l'entrée standard, aussitôt fermée : `opencode run` lit son entrée tant qu'elle n'est pas un terminal,
+et une entrée restée ouverte le laisse attendre sans fin. `OPENCODE_CONFIG_DIR` pointe vers un dossier
+vide (`.harness-state/opencode/config`) : ni serveurs MCP, ni plugins, ni agents, ni `AGENTS.md` de la
+configuration personnelle ; les identifiants, rangés dans le dossier de données d'OpenCode, restent
+disponibles. Un fournisseur déclaré seulement dans la configuration personnelle se redéclare dans
+`.opencode/opencode.jsonc` du projet.
+
+L'agent `.opencode/agents/ticket-opencode.md` autorise tout sauf les sous-agents (`subagent`), les
+questions (`question`) et le mode code (`execute`, qui ferait passer les outils par un script) ; il garde
+l'invite système d'OpenCode. Les skills de `.claude/skills/` et `.agents/skills/` lui sont visibles,
+comme `AGENTS.md`, lien vers `CLAUDE.md`.
+
+Le plugin `.opencode/plugins/harness.js` branche les scripts de `.claude/hooks/` sur la session, comme
+`.codex/hooks.json` pour Codex. Avant `write`, `edit`, `patch` et `shell`, il lance `guard-write` ou
+`guard-bash` avec l'entrée de Claude Code ; un refus passe par l'évaluation des permissions d'OpenCode
+(même identifiant d'appel) et arrive au modèle comme une erreur de l'outil, avec sa raison. Après une
+édition, `after-edit` ajoute au résultat de l'outil un contrôle rapide en échec. Au premier message de
+chaque session, `session-context` ajoute le contexte du dépôt à la consigne et écrit le témoin
+`hooks-started.json` (session et `HARNESS_HOOK_RUN` de l'invocation). Une compaction passe par
+`record-compaction`. Un garde-fou qui ne peut pas tourner refuse l'appel en boucle et le soumet à la
+personne présente en interactif. Sans témoin valide après une invocation, la tentative est refusée
+avec « plugin OpenCode non chargé ».
+
+OpenCode n'a pas de fin de tour bloquante : après chaque invocation, la boucle lance elle-même
+`.claude/hooks/stop-gate.mjs`. Sans verdict, ou sur un verdict TERMINÉ au contrôle rouge, elle reprend
+la session (`--session <id>`) avec la raison, deux fois au plus par session. Une relecture « à
+corriger » reprend aussi la session, avec le rapport ; une reprise qui échoue avant tout travail se
+replie sur une session neuve (`reprise-impossible`). Une erreur du flux ou un processus en échec refuse
+la tentative.
+
+Le flux de la tentative, reprises comprises, s'ajoute à `.harness-state/tickets/<ID>/opencode-<n>.jsonl`.
+La dernière étape d'une session n'y porte pas de coût : le coût et les jetons de l'événement
+`session-terminee` viennent de `opencode session export <id> --standalone`, session par session.
+Un export manquant laisse le coût à `null` plutôt que de le sous-estimer. Le quota et la saturation
+d'un fournisseur OpenCode ne sont pas reconnus à part : ils refusent la tentative comme une autre
+erreur. `--fallback-engine` reste propre à Codex. Le commit est signé
+`Co-Authored-By: OpenCode (<modèle>) <noreply@opencode.ai>`. `HARNESS_OPENCODE_BIN` remplace le CLI pour
+les tests.
+
+En interactif, OpenCode charge le même plugin depuis son serveur d'arrière-plan : les écritures du
+harnais et les commandes à risque y demandent confirmation, comme avec Claude.
+
 ### Relève après intégration de la boucle elle-même
 
 `run.mjs` confie le travail à un processus enfant et reste superviseur : il garde la commande, ses
@@ -322,6 +394,7 @@ Pour aller plus loin :
 | `.harness-state/tickets/<ID>/session-<n>.json` | le compte rendu final de la session (tours, durée, coût) |
 | `.harness-state/tickets/<ID>/session-<n>.jsonl` | le flux entier de la session, message par message |
 | `.harness-state/tickets/<ID>/codex-<n>.jsonl` | le flux Codex de la tentative, corrections comprises, cité par sa rétrospective |
+| `.harness-state/tickets/<ID>/opencode-<n>.jsonl` | le flux OpenCode de la tentative, reprises comprises, cité par sa rétrospective |
 | `.harness-state/tickets/<ID>/untracked-before.json` | la liste initiale des non suivis, que les contrôles comparent à la référence en mémoire |
 | `.harness-state/tickets/<ID>/exploration.md` | le rapport d'exploration |
 | `.harness-state/tickets/<ID>/ecarts.md` | les écarts aux critères déclarés avant l'implémentation et les constats contestés, que le relecteur tranche |
@@ -337,8 +410,8 @@ Pour aller plus loin :
 Un verdict TERMINÉ peut garder des réserves dans `reste` : un constat de relecture hors périmètre, un
 écart à un critère accepté par le relecteur, ce qui n'a pas pu être vérifié, ou une question pour le
 propriétaire. La boucle intègre et les affiche.
-Avec Codex, elle y ajoute les réserves de la dernière relecture acceptée, chacune avec le chemin
-du rapport conservé.
+Avec Codex et OpenCode, elle y ajoute les réserves de la dernière relecture acceptée, chacune avec le
+chemin du rapport conservé.
 
 ## Rétrospective
 
@@ -346,8 +419,8 @@ Après chaque ticket, intégré ou bloqué, une courte session Sonnet en lecture
 boucle a observé (tentatives, modèles, coûts, refus, sous-agents, verdicts) et propose des
 améliorations du harnais, chacune avec sa preuve. Elle coûte quelques dizaines de centimes ; son
 échec est signalé et n'arrête jamais la boucle.
-Pour une tentative Codex, son entrée cite `codex-<n>.jsonl` ; elle omet le nombre de compactions
-quand il est inconnu.
+Pour une tentative Codex, son entrée cite `codex-<n>.jsonl`, pour OpenCode `opencode-<n>.jsonl` ; elle
+omet le nombre de compactions quand il est inconnu.
 
 Les propositions s'accumulent dans `.harness-state/retours/observations.jsonl`, au statut `propose`.
 Après un lot de tickets :
@@ -522,7 +595,7 @@ Ce que les premiers tickets ont appris :
 ## Garde-fous
 
 Dans une session de ticket, les hooks de `.claude/hooks/` refusent : commit, push, changement de
-branche, session Claude ou Codex imbriquée, `gh`, installation de dépendance non autorisée (npm, pnpm,
+branche, session Claude, Codex ou OpenCode imbriquée, `gh`, installation de dépendance non autorisée (npm, pnpm,
 yarn, bun, pip, uv, poetry, cargo, go, bundle), écriture
 hors du projet, modification du harnais ou d'un autre ticket, création d'un fichier de test nommé
 d'après un chantier. Un ticket `harnais: oui` lève le verrou du harnais et peut modifier le gabarit des

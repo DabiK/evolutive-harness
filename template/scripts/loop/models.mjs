@@ -1,7 +1,7 @@
 // Modèle de chaque tentative d'un ticket : une échelle de paliers, un point de départ fixé par le niveau
 // du ticket, un palier de plus à chaque tentative refusée. Aucun effet de bord.
 // Le projet peut remplacer les échelles et les niveaux dans harness.config.mjs (`models.ladder`, `models.codexLadder`,
-// `models.levels`).
+// `models.opencodeLadder`, `models.levels`).
 
 /** Du moins cher au plus fort. `alias` est le nom qu'accepte le paramètre `model` d'un sous-agent. */
 export const LADDER = [
@@ -20,6 +20,20 @@ export const CODEX_LADDER = [
 ];
 
 /**
+ * Échelle du moteur OpenCode, palier pour palier avec celle de Claude ; le relecteur reste Claude. `model` est
+ * `fournisseur/modèle` tel que le liste `opencode models`, `effort` la variante (`-m <model>#<effort>`).
+ */
+export const OPENCODE_LADDER = [
+  { model: "opencode-go/deepseek-v4.1-flash", effort: "high" },
+  { model: "opencode-go/deepseek-v4.1-flash", effort: "max" },
+  { model: "opencode-go/deepseek-v4-pro", effort: "high" },
+  { model: "opencode-go/deepseek-v4-pro", effort: "max" },
+];
+
+/** Échelle propre à chaque moteur externe ; Claude garde `ladder`. */
+const ENGINE_LADDERS = { codex: "codexLadder", opencode: "opencodeLadder" };
+
+/**
  * Niveau d'un ticket : palier de départ, et palier en dessous duquel le relecteur ne descend pas.
  * Le relecteur est le dernier filet avant les contrôles de la boucle : sauf sur un ticket simple, il
  * reste au moins sur le deuxième palier quand l'implémentation tourne sur le premier.
@@ -36,6 +50,7 @@ export function modelSettings(models = {}) {
   return {
     ladder: models.ladder?.length ? models.ladder : LADDER,
     codexLadder: models.codexLadder?.length ? models.codexLadder : CODEX_LADDER,
+    opencodeLadder: models.opencodeLadder?.length ? models.opencodeLadder : OPENCODE_LADDER,
     levels: { ...LEVELS, ...models.levels },
   };
 }
@@ -68,15 +83,21 @@ export function plan(level, attempt, settings = DEFAULT_SETTINGS, engine = "clau
   const rung = rungFor(level, attempt, settings);
   const review = settings.ladder[Math.min(Math.max(rung, settings.levels[level].reviewFloor), top(settings))];
   // Le relecteur reste sur l'échelle Claude ; seule l'implémentation change de moteur, au même palier ou au plus haut du sien.
-  const own = engine === "codex" ? settings.codexLadder[Math.min(rung, settings.codexLadder.length - 1)] : settings.ladder[rung];
+  const ladder = settings[ENGINE_LADDERS[engine]] ?? settings.ladder;
+  const own = ladder[Math.min(rung, ladder.length - 1)];
   return { rung, ...own, reviewModel: review.alias };
 }
 
 /**
- * « claude-opus-5-5 » → « Claude Opus 5.5 », « gpt-6.1-sol » → « Codex (GPT-6.1 Sol) ». Un nom qui ne suit aucun de ces
- * formats garde celui de son moteur.
+ * « claude-opus-5-5 » → « Claude Opus 5.5 », « gpt-6.1-sol » → « Codex (GPT-6.1 Sol) »,
+ * « opencode-go/deepseek-v4.1-flash » → « OpenCode (deepseek-v4.1-flash) ». Un nom qui ne suit aucun de ces formats garde
+ * celui de son moteur.
  */
 export function displayName(model, engine = "claude") {
+  if (engine === "opencode") {
+    const id = String(model || "").split("/").at(-1).split("#")[0];
+    return /^[\w.-]+$/.test(id) ? `OpenCode (${id})` : "OpenCode";
+  }
   const gpt = /^gpt-([\d.]+)-([a-z]+)$/.exec(model || "");
   if (gpt) return `Codex (GPT-${gpt[1]} ${gpt[2][0].toUpperCase()}${gpt[2].slice(1)})`;
   const match = /^claude-([a-z]+)-(\d+)-(\d+)$/.exec(model || "");

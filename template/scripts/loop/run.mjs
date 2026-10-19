@@ -9,6 +9,7 @@
 //   --attempts <n> (sessions par ticket ; par défaut, de quoi monter jusqu'en haut de l'échelle des modèles)
 //   --model <m> (fige le modèle, sans escalade)   --effort <e>   --no-push   --no-retro
 //   --engine codex --fallback-engine claude (une relève après quota ; modèle/effort deviennent le palier Claude)
+//   --engine opencode (OpenCode explore et implémente, Claude relit ; --effort devient la variante du modèle)
 //   --permission-mode auto   --budget-usd <n>   --timeout-min 120
 //   --compact-window 200000 (plafond de contexte d'une session, en tokens ; 0 pour ne pas le fixer)
 //   --tune-every <n> (harmonise les consignes du harnais tous les n tickets intégrés ; 0, par défaut, jamais)
@@ -22,6 +23,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { admitWorker, integratedModules, receiveLaunch, retireWorker, supervise } from "./restart.mjs";
 import { runCodex } from "./codex.mjs";
+import { runOpencode } from "./opencode.mjs";
 import { quotaDiagnostic } from "./codex-quota.mjs";
 import { captureQuotaHandoff, consumeQuotaHandoff, fingerprintUntracked, preexistingChange, reviewFingerprint } from "./quota-handoff.mjs";
 import { loadConfig } from "../quality/config.mjs";
@@ -74,6 +76,10 @@ const stateDir = path.join(root, ".harness-state");
 const loopDir = path.join(stateDir, "loop");
 const lockFile = path.join(loopDir, "lock");
 const QUOTA_EXIT_CODE = 5;
+// Moteurs qui explorent et implémentent hors de Claude ; la boucle fait relire leur travail par un processus Claude séparé.
+const EXTERNAL_ENGINES = { codex: runCodex, opencode: runOpencode };
+const COMMIT_EMAILS = { claude: "noreply@anthropic.com", codex: "noreply@openai.com", opencode: "noreply@opencode.ai" };
+const SESSION_COMMANDS = { codex: "codex exec --json", opencode: "opencode run --standalone --format json" };
 
 function sh(command, args, extra = {}) {
   const result = spawnSync(command, args, { cwd: root, encoding: "utf8", maxBuffer: 256 * 1024 * 1024, ...extra });
@@ -156,7 +162,7 @@ function receiveQuotaWork() {
 }
 
 function preflight() {
-  if (!["claude", "codex"].includes(options.engine)) stop(1, "--engine attend claude ou codex.");
+  if (!["claude", ...Object.keys(EXTERNAL_ENGINES)].includes(options.engine)) stop(1, "--engine attend claude, codex ou opencode.");
   if (!launch && argv.filter(arg => arg === "--fallback-engine").length > 1) stop(1, "--fallback-engine ne se précise qu'une fois.");
   if (options.fallbackEngine !== null && (options.engine !== "codex" || options.fallbackEngine !== "claude")) {
     stop(1, "--fallback-engine attend claude, uniquement avec --engine codex.");
@@ -282,15 +288,15 @@ function streamSession(bin, args, env, dir, attempt) {
 
 /**
  * Modèle de la tentative : un palier de l'échelle selon le niveau du ticket, un de plus à chaque tentative
- * refusée. Avec Claude, `--model` laisse le relecteur hériter ; Codex garde un relecteur Claude séparé.
+ * refusée. Avec Claude, `--model` laisse le relecteur hériter ; un moteur externe garde un relecteur Claude séparé.
  */
 function sessionPlan(ticket, attempt) {
   const niveau = levelOf(ticket);
   const step = plan(niveau, attempt, models, options.engine);
   if (options.model) {
-    const codex = options.engine === "codex";
-    const effort = options.effort || (codex ? step.effort : null);
-    return { niveau, modele: options.model, effort, palier: null, relecteur: codex ? step.reviewModel : null };
+    const external = Object.hasOwn(EXTERNAL_ENGINES, options.engine);
+    const effort = options.effort || (external ? step.effort : null);
+    return { niveau, modele: options.model, effort, palier: null, relecteur: external ? step.reviewModel : null };
   }
   return { niveau, modele: step.model, effort: options.effort || step.effort, palier: step.rung, relecteur: step.reviewModel };
 }
@@ -477,7 +483,7 @@ function integrate(ticket, branch, untracked, { step, verdict, history, reviewRe
   const file = path.join(root, ticket.file);
   fs.writeFileSync(file, withReserves(setStatus(fs.readFileSync(file, "utf8"), "termine"), reserves));
   const paths = statusEntries().flatMap((e) => e.paths).filter((p) => !untracked.has(p));
-  const email = options.engine === "codex" ? "noreply@openai.com" : "noreply@anthropic.com";
+  const email = COMMIT_EMAILS[options.engine];
   const trailer = `Co-Authored-By: ${displayName(step.modele, options.engine)} <${email}>`;
   const committed = commitPaths(paths, commitMessage(ticket, reserves, trailer));
   if (committed.problem) return block(ticket, "Le commit a échoué :\n" + committed.problem, history);
@@ -589,12 +595,12 @@ async function processTicket(ticket, context, resume, head) {
     // Un verdict d'une tentative précédente ne vaut pas pour celle-ci.
     fs.rmSync(path.join(dir, "verdict.json"), { force: true });
     const step = sessionPlan(ticket, attempt);
-    const session = options.engine === "codex" ? runCodex : runSession;
+    const external = EXTERNAL_ENGINES[options.engine];
     const args = [ticket, attempt, dir, failureReport, step];
     const handoff = resume && attempt === resume.attempt ? resume : null;
-    const result = options.engine === "codex"
-      ? await session(root, ...args, { event, timeoutMin: options.timeoutMin })
-      : await session(...args, handoff);
+    const result = external
+      ? await external(root, ...args, { event, timeoutMin: options.timeoutMin, project: config.project })
+      : await runSession(...args, handoff);
     if (result.quota?.code === "CODEX_QUOTA_EXHAUSTED") {
       return quotaOutcome(ticket, context, { result, attempt, attempts, step, head, specification: specBefore, history, failureReport });
     }
@@ -666,7 +672,7 @@ for (let done = launch?.done ?? 0; done < options.max; done++) {
     say(`Prochain ticket : ${ticket.id} — ${ticket.titre} (${ticket.file}), niveau ${first.niveau}`);
     say(`Moteur : ${options.engine}.`);
     if (options.fallbackEngine) say("Secours après quota : Claude, au palier de la tentative utile ; --model et --effort Codex sont remplacés.");
-    const command = options.engine === "codex" ? "codex exec --json" : `claude -p … --permission-mode ${options.permissionMode}`;
+    const command = SESSION_COMMANDS[options.engine] ?? `claude -p … --permission-mode ${options.permissionMode}`;
     say(`Session : ${command}, ${attemptsFor(ticket)} tentative(s) au plus.`);
     for (let attempt = 1; attempt <= attemptsFor(ticket); attempt++) {
       const step = sessionPlan(ticket, attempt);

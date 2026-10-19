@@ -7,6 +7,7 @@ const { spawn } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
 const { harnessRepo } = require("./helpers/harness-repo.cjs");
 const { CODEX_SESSION, CAPACITY_EVENTS, QUOTA_EVENTS, STARTUP_WARNING_EVENTS } = require("./helpers/codex-session.cjs");
+const { OPENCODE_SESSION } = require("./helpers/opencode-session.cjs");
 
 const tickets = () => import(pathToFileURL(path.join(__dirname, "..", "..", "scripts/loop/tickets.mjs")).href);
 const tuning = () => import(pathToFileURL(path.join(__dirname, "..", "..", "scripts/loop/tune.mjs")).href);
@@ -432,7 +433,7 @@ if (process.env.FAKE_CLAUDE_FAILURE === "1") process.exitCode = 1;
 // Chaque appel garde un processus neuf et écrit seulement dans le dépôt propre à son scénario.
 const fakeAgentDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-fake-agents-"));
 after(() => fs.rmSync(fakeAgentDir, { recursive: true, force: true }));
-for (const [name, source] of [["claude", FAKE_SESSION], ["codex", CODEX_SESSION]]) {
+for (const [name, source] of [["claude", FAKE_SESSION], ["codex", CODEX_SESSION], ["opencode", OPENCODE_SESSION]]) {
   fs.writeFileSync(path.join(fakeAgentDir, `${name}.cjs`), source, { mode: 0o555 });
 }
 
@@ -4505,4 +4506,235 @@ test("the successor still refuses a change made after review and preserves the b
   assert.match(repo.read(".harness-state/tickets/T002/echec-1.txt"), /modifié depuis la dernière relecture/);
   assert.equal(fs.existsSync(path.join(repo.root, ".harness-state/tickets/T003")), false);
   assert.deepEqual(repo.commits(), ["T001: Add the greeting", "init"]);
+});
+
+// Moteur OpenCode : la fausse session charge le vrai plugin du harnais (.opencode/plugins/harness.js) par l'hôte factice.
+function opencodeRepo(fields = {}, files = {}) {
+  const repo = loopRepo({ "docs/travail/tickets/001-add-greeting.md": ticketText(fields), ...files });
+  const bin = linkFakeAgent(repo, "opencode");
+  const opencode = (args = [], env = {}) =>
+    repo.loop("done", ["--engine", "opencode", "--no-retro", ...args], { HARNESS_OPENCODE_BIN: bin, ...env });
+  return { ...repo, bin, opencode, calls: () => jsonLines(repo, "fake-opencode-calls") };
+}
+const sessionEnded = (repo) => repo.events().find((e) => e.phase === "session-terminee");
+
+test("an OpenCode dry run lists its engine, its command and every planned model and variant", (t) => {
+  const repo = opencodeRepo();
+  t.after(repo.cleanup);
+  const result = repo.opencode(["--dry-run"]);
+  assert.equal(result.code, 0, result.out);
+  assert.match(result.out, /Moteur : opencode\./);
+  assert.match(result.out, /Session : opencode run --standalone --format json, 4 tentative\(s\) au plus\./);
+  for (const line of [
+    "Palier 0 : opencode-go/deepseek-v4.1-flash, effort high, relecteur opus",
+    "Palier 1 : opencode-go/deepseek-v4.1-flash, effort max, relecteur opus",
+    "Palier 2 : opencode-go/deepseek-v4-pro, effort high, relecteur opus",
+    "Palier 3 : opencode-go/deepseek-v4-pro, effort max, relecteur fable",
+  ]) assert.ok(result.out.includes(line), result.out);
+  assert.equal(repo.git("status", "--porcelain").stdout, "");
+});
+
+test("a project OpenCode ladder from harness.config.mjs replaces the default one", (t) => {
+  const config = [
+    "export default {",
+    "  models: {",
+    '    opencodeLadder: [{ model: "openrouter/deepseek/deepseek-v4.1-flash", effort: "low" }],',
+    "  },",
+    "};",
+  ].join("\n");
+  const repo = opencodeRepo({ niveau: "sensible" }, { "harness.config.mjs": config + "\n" });
+  t.after(repo.cleanup);
+  const result = repo.opencode(["--dry-run"]);
+  assert.equal(result.code, 0, result.out);
+  assert.match(result.out, /Première tentative : openrouter\/deepseek\/deepseek-v4\.1-flash, effort low, relecteur opus\./);
+});
+
+test("an OpenCode ticket accepted on its first review is integrated with its plugin, its own signature and the session cost", (t) => {
+  const repo = opencodeRepo();
+  t.after(repo.cleanup);
+  const result = repo.opencode(["--attempts", "1"]);
+  assert.equal(result.code, 0, result.out);
+  const calls = repo.calls();
+  assert.equal(calls.length, 1);
+  const [{ args, prompt, stdinIsPipe, env, configDir, configEmpty, run, cwd }] = calls;
+  assert.deepEqual(args, [
+    "run", "--standalone", "--format", "json", "--agent", "ticket-opencode",
+    "--title", "Exemple T001 tentative 1", "-m", "opencode-go/deepseek-v4.1-flash#high",
+  ]);
+  assert.equal(cwd, repo.root);
+  assert.ok(stdinIsPipe, "the prompt must come through a closed standard input");
+  assert.match(prompt, /^Traite le ticket T001 \(docs\/travail\/tickets\/001-add-greeting\.md\) en suivant \.agents\/skills\/ticket-opencode\/SKILL\.md\./);
+  assert.match(prompt, /Mode boucle : ticket T001/, "the plugin adds the repository context to the first message");
+  assert.deepEqual(env, {
+    LOOP: "1", ENGINE: "opencode", TICKET: "T001", TICKET_FILE: "docs/travail/tickets/001-add-greeting.md", EDIT: "0", ALLOW_INSTALL: "0",
+  });
+  assert.equal(configDir, path.join(repo.root, ".harness-state/opencode/config"));
+  assert.ok(configEmpty, "the personal OpenCode configuration stays out of a loop session");
+  assert.deepEqual(JSON.parse(repo.read(codexDir + "hooks-started.json")), { session: "ses_fake1", run });
+  const review = jsonLines(repo, "fake-review-calls")[0];
+  assert.equal(review.model, "opus");
+  assert.equal(review.loop, null);
+  for (const file of ["001-add-greeting.md", "revue-1.diff", "revue-1.fichiers"]) assert.ok(review.prompt.includes(file), review.prompt);
+  assert.equal(repo.status(), "termine");
+  assert.match(repo.git("log", "-1", "--format=%B").stdout, /Co-Authored-By: OpenCode \(deepseek-v4\.1-flash\) <noreply@opencode\.ai>/);
+  assert.equal(repo.events().find((e) => e.phase === "session").moteur, "opencode");
+  const ended = sessionEnded(repo);
+  assert.equal(ended.moteur, "opencode");
+  assert.equal(ended.cout_usd, 0.0125);
+  assert.deepEqual(ended.jetons, { input: 100, output: 20, reasoning: 5, cache_read: 50, cache_write: 1 });
+  assert.deepEqual(ended.sessions, ["ses_fake1"]);
+  assert.equal(ended.tours, 2);
+  assert.equal(ended.relectures, 1);
+  assert.equal(ended.compactions, 0);
+  assert.deepEqual(jsonLines(repo, "fake-opencode-exports").map((e) => e.args), [["session", "export", "ses_fake1", "--standalone"]]);
+  assert.match(result.out, /\[boucle\] \d\d:\d\d {2}write core\/greeting\.cjs/);
+  assert.match(result.out, /T001 intégré \([0-9a-f]+\) en 1 tentative\(s\), 0\.01 \$/);
+  assert.equal(jsonLines(repo, "opencode-1.jsonl").length, 5);
+});
+
+for (const [scenario, file, reason] of [
+  ["edits-harness", "scripts/check.mjs", /scripts\/check\.mjs fait partie du harnais/],
+  ["commits", null, /la boucle committe et pousse elle-même/],
+]) {
+  test(`an OpenCode session gets the guard's refusal as a tool error and the refused action never happens: ${scenario}`, (t) => {
+    const repo = opencodeRepo();
+    t.after(repo.cleanup);
+    const head = repo.git("rev-parse", "HEAD").stdout.trim();
+    const result = repo.opencode(["--attempts", "1"], { FAKE_OPENCODE_SCENARIO: scenario });
+    assert.equal(result.code, 0, result.out);
+    const [refused] = repo.calls()[0].tools;
+    assert.equal(refused.status, "error");
+    assert.equal(refused.effect, "deny");
+    assert.match(refused.error, reason);
+    if (file) assert.equal(repo.calls()[0].files.check, false);
+    assert.match(result.out, /erreur : Refusé|erreur : .*fait partie du harnais/);
+    assert.deepEqual(repo.git("log", "--format=%P", "-1").stdout.trim(), head);
+  });
+}
+
+test("an OpenCode session without the plugin's startup witness is refused, even with a finished verdict", (t) => {
+  const repo = opencodeRepo();
+  t.after(repo.cleanup);
+  const result = repo.opencode(["--attempts", "1"], { FAKE_OPENCODE_PLUGIN: "missing" });
+  assert.equal(result.code, 2, result.out);
+  assert.match(repo.failure(), /plugin OpenCode non chargé/);
+  assert.equal(fs.existsSync(path.join(repo.root, codexDir, "fake-review-calls")), false);
+  assert.deepEqual(repo.commits(), ["init"]);
+});
+
+test("an OpenCode session that ends without a verdict is resumed in the same session with the stop gate's reason", (t) => {
+  const repo = opencodeRepo();
+  t.after(repo.cleanup);
+  const result = repo.opencode(["--attempts", "1"], { FAKE_OPENCODE_SCENARIOS: JSON.stringify(["no-verdict", "done"]) });
+  assert.equal(result.code, 0, result.out);
+  const [first, second] = repo.calls();
+  assert.ok(first.args.includes("--title"));
+  assert.deepEqual(second.args.slice(6, 8), ["--session", "ses_fake1"]);
+  assert.equal(second.args.includes("--title"), false);
+  assert.match(second.prompt, /^La boucle refuse la fin de ta session : Aucun verdict pour T001/);
+  assert.ok(second.prompt.includes(".agents/skills/ticket-opencode/SKILL.md"), second.prompt);
+  assert.equal(JSON.parse(repo.read(codexDir + "hooks-started.json")).run, second.run);
+  assert.equal(repo.status(), "termine");
+  assert.deepEqual(sessionEnded(repo).sessions, ["ses_fake1"]);
+});
+
+test("a rejected review resumes the same OpenCode session with the report, then a correction review accepts it", (t) => {
+  const repo = opencodeRepo();
+  t.after(repo.cleanup);
+  const result = repo.opencode(["--attempts", "1"], { FAKE_REVIEWS: JSON.stringify([rejectedReview, acceptedReview]) });
+  assert.equal(result.code, 0, result.out);
+  const calls = repo.calls();
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[1].args.slice(6, 8), ["--session", "ses_fake1"]);
+  assert.match(calls[1].prompt, /^Reprends le ticket T001 .* en suivant \.agents\/skills\/ticket-opencode\/SKILL\.md\./);
+  assert.ok(calls[1].prompt.includes("relecture-1.md") && calls[1].prompt.includes("preuve manquante"), calls[1].prompt);
+  const reviews = jsonLines(repo, "fake-review-calls");
+  assert.equal(reviews.length, 2);
+  assert.match(reviews[1].prompt, /relecture de correction/);
+  assert.equal(sessionEnded(repo).relectures, 2);
+  assert.equal(repo.status(), "termine");
+});
+
+test("an OpenCode resume that fails before any work falls back on a fresh session and says why", (t) => {
+  const repo = opencodeRepo();
+  t.after(repo.cleanup);
+  const result = repo.opencode(["--attempts", "1"], {
+    FAKE_REVIEWS: JSON.stringify([rejectedReview, acceptedReview]), FAKE_OPENCODE_RESUME_FAILURE: "1",
+  });
+  assert.equal(result.code, 0, result.out);
+  const calls = repo.calls();
+  assert.equal(calls.length, 3);
+  assert.deepEqual(calls[1].args.slice(6, 8), ["--session", "ses_fake1"]);
+  assert.ok(calls[2].args.includes("--title"));
+  assert.match(calls[2].prompt, /La reprise de ta session a échoué : relis aussi \.agents\/skills\/ticket-opencode\/SKILL\.md\./);
+  const fallback = repo.events().find((e) => e.phase === "reprise-impossible");
+  assert.equal(fallback.session, "ses_fake1");
+  assert.match(fallback.raison, /Session not found: ses_fake1/);
+  const ended = sessionEnded(repo);
+  assert.deepEqual(ended.sessions, ["ses_fake1", "ses_fake3"]);
+  assert.equal(ended.cout_usd, 0.025);
+});
+
+for (const [failure, reason] of [
+  ["error", /OpenCode : simulated OpenCode failure/],
+  ["exit", /OpenCode : processus en échec \(code 2\)\. simulated crash/],
+]) {
+  test(`an OpenCode stream error or a failing process refuses the attempt before any review: ${failure}`, (t) => {
+    const repo = opencodeRepo();
+    t.after(repo.cleanup);
+    const result = repo.opencode(["--attempts", "1"], { FAKE_OPENCODE_FAILURE: failure });
+    assert.equal(result.code, 2, result.out);
+    assert.match(repo.failure(), reason);
+    assert.equal(fs.existsSync(path.join(repo.root, codexDir, "fake-review-calls")), false);
+  });
+}
+
+test("a blocked OpenCode verdict stops the loop at once with its reason, without review", (t) => {
+  const repo = opencodeRepo();
+  t.after(repo.cleanup);
+  const result = repo.opencode([], { FAKE_OPENCODE_SCENARIO: "blocked" });
+  assert.equal(result.code, 2, result.out);
+  assert.match(result.out, /Quel fournisseur choisir \?/);
+  assert.equal(repo.calls().length, 1);
+  assert.equal(fs.existsSync(path.join(repo.root, codexDir, "fake-review-calls")), false);
+});
+
+test("a refused OpenCode attempt climbs one rung, and a forced model takes the forced effort as its variant", (t) => {
+  const repo = opencodeRepo();
+  t.after(repo.cleanup);
+  const climbed = repo.opencode(["--attempts", "2"], { FAKE_OPENCODE_SCENARIOS: JSON.stringify(["partial", "done"]) });
+  assert.equal(climbed.code, 0, climbed.out);
+  assert.deepEqual(repo.calls().map(({ args }) => args.at(-1)), ["opencode-go/deepseek-v4.1-flash#high", "opencode-go/deepseek-v4.1-flash#max"]);
+  assert.ok(repo.calls()[1].prompt.includes("echec-1.txt"), repo.calls()[1].prompt);
+  const forced = opencodeRepo();
+  t.after(forced.cleanup);
+  assert.equal(forced.opencode(["--attempts", "1", "--model", "openrouter/deepseek/deepseek-v4.1-flash", "--effort", "low"]).code, 0);
+  assert.equal(forced.calls()[0].args.at(-1), "openrouter/deepseek/deepseek-v4.1-flash#low");
+});
+
+test("an unreadable OpenCode export leaves the cost unknown instead of underestimated", (t) => {
+  const repo = opencodeRepo();
+  t.after(repo.cleanup);
+  const result = repo.opencode(["--attempts", "1"], { FAKE_OPENCODE_EXPORT: "fail" });
+  assert.equal(result.code, 0, result.out);
+  assert.equal(sessionEnded(repo).cout_usd, null);
+  assert.match(result.out, /coût indisponible/);
+});
+
+test("a compaction recorded by the OpenCode plugin is counted for the attempt", (t) => {
+  const repo = opencodeRepo();
+  t.after(repo.cleanup);
+  const result = repo.opencode(["--attempts", "1"], { FAKE_OPENCODE_SCENARIO: "compacts" });
+  assert.equal(result.code, 0, result.out);
+  assert.equal(sessionEnded(repo).compactions, 1);
+});
+
+test("the retrospective of an OpenCode attempt cites its stream", (t) => {
+  const repo = opencodeRepo();
+  t.after(repo.cleanup);
+  const result = repo.loop("done", ["--engine", "opencode"], { HARNESS_OPENCODE_BIN: repo.bin });
+  assert.equal(result.code, 0, result.out);
+  const digest = repo.read(codexDir + "retro-entree.md");
+  assert.ok(digest.includes(codexDir + "opencode-1.jsonl"), digest);
+  assert.doesNotMatch(digest, /session-1\.jsonl|undefined/);
 });

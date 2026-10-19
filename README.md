@@ -1,11 +1,11 @@
 # evolutive-harness
 
-Un harnais Claude Code et Codex à installer dans un projet : un contrôle qualité unique, un cliquet, des
+Un harnais Claude Code, Codex et OpenCode à installer dans un projet : un contrôle qualité unique, un cliquet, des
 garde-fous, des rôles et une boucle qui traite des tickets un par un. Il se resserre avec le projet
 et fait remonter ses améliorations d'un projet à l'autre.
 
-Le principe tient en une phrase : **la session propose, le script décide.** Une session Claude Code ou
-Codex fait le travail d'un ticket ; un script qu'elle ne peut pas contourner revérifie tout avant de committer.
+Le principe tient en une phrase : **la session propose, le script décide.** Une session Claude Code,
+Codex ou OpenCode fait le travail d'un ticket ; un script qu'elle ne peut pas contourner revérifie tout avant de committer.
 
 ## Ce qu'il contient
 
@@ -13,11 +13,11 @@ Codex fait le travail d'un ticket ; un script qu'elle ne peut pas contourner rev
 | --- | --- | --- |
 | Contrôle unique | `scripts/check.mjs` | règles par fichier, format, lint, gel du lint, cliquet, suites de tests en séquentiel avec une durée maximale ; appelé par les hooks, la boucle et la CI |
 | Cliquet | `scripts/quality/` | des mesures simples (lignes longues, `catch` vides, cas de test…) qui ne peuvent pas se dégrader ; le plancher se resserre à chaque ticket |
-| Garde-fous | `.claude/hooks/`, `.codex/hooks.json` | les mêmes scripts pour Claude et Codex ; en boucle, refusent les commandes destructrices, commit, push, changement de branche, installation non autorisée, écriture hors projet et modification du harnais ; en interactif, demandent confirmation pour les commandes destructrices et la modification du harnais ; fin de tour bloquée sans verdict ou sur un contrôle rouge |
+| Garde-fous | `.claude/hooks/`, `.codex/hooks.json`, `.opencode/plugins/harness.js` | les mêmes scripts pour Claude, Codex et OpenCode ; en boucle, refusent les commandes destructrices, commit, push, changement de branche, installation non autorisée, écriture hors projet et modification du harnais ; en interactif, demandent confirmation pour les commandes destructrices et la modification du harnais ; fin de tour bloquée sans verdict ou sur un contrôle rouge |
 | Rôles | `.claude/agents/` | `explorateur` (lecture seule), `implementeur` (code et tests ensemble), `relecteur` (regard neuf, verdict lu par la machine), `harmoniseur` (corrige les consignes) |
-| Méthodes | `.claude/skills/`, `.agents/skills/` | `ticket` (orchestration de bout en bout), `ticket-codex` (le même travail pour Codex), `decoupage` (écrire des tickets), `tests` (rouge vu, vert minimal), `harmonisation` (consignes corrigées à partir des rétrospectives) |
-| Boucle | `scripts/loop/` | une session fraîche par ticket, Claude ou Codex, une échelle de modèles par moteur, l'état relu vérifié par empreinte, des relectures de correction, le commit et le push par le script, une rétrospective après chaque ticket, l'harmonisation des consignes, la relève du processus après intégration de son propre code, la reprise après quota |
-| Tests du harnais | `tests/harness/` | des centaines de tests qui font tourner hooks, cliquet et boucle dans des dépôts jetables, avec de fausses sessions Claude et Codex |
+| Méthodes | `.claude/skills/`, `.agents/skills/` | `ticket` (orchestration de bout en bout), `ticket-codex` et `ticket-opencode` (le même travail pour Codex et OpenCode), `decoupage` (écrire des tickets), `tests` (rouge vu, vert minimal), `harmonisation` (consignes corrigées à partir des rétrospectives) |
+| Boucle | `scripts/loop/`, `.opencode/agents/` | une session fraîche par ticket, Claude, Codex ou OpenCode, une échelle de modèles par moteur, l'état relu vérifié par empreinte, des relectures de correction, le commit et le push par le script, une rétrospective après chaque ticket, l'harmonisation des consignes, la relève du processus après intégration de son propre code, la reprise après quota |
+| Tests du harnais | `tests/harness/` | des centaines de tests qui font tourner hooks, cliquet et boucle dans des dépôts jetables, avec de fausses sessions Claude, Codex et OpenCode |
 | Mode d'emploi | `docs/travail/README.md` | lancer la boucle, lire un échec, débloquer un ticket, faire évoluer le harnais |
 
 ## Le cycle d'un ticket
@@ -59,8 +59,10 @@ Rien ne change sans décision du propriétaire, mais tout est en place pour que 
 
 ## Installer
 
-Prérequis : Node 20 ou plus, Git, le CLI `claude` pour la boucle, et le CLI `codex` pour son moteur Codex.
-Les hooks Codex s'approuvent une fois par dépôt : `codex` à la racine, puis `/hooks`.
+Prérequis : Node 20 ou plus, Git, le CLI `claude` pour la boucle, le CLI `codex` pour son moteur Codex, et
+le CLI `opencode` (version 2) pour son moteur OpenCode. Les hooks Codex s'approuvent une fois par dépôt :
+`codex` à la racine, puis `/hooks`. OpenCode charge son plugin sans approbation ; ses identifiants de
+fournisseur se règlent une fois avec `opencode auth login`.
 
 ```sh
 git clone git@github.com:DabiK/evolutive-harness.git
@@ -115,13 +117,15 @@ Un fichier du noyau modifié dans le projet n'est jamais écrasé sans `--force`
 | `maxLineLength` | `160` | longueur maximale d'une ligne |
 | `suites` | aucune | `{ name, command, files }` : la commande reçoit les fichiers de la suite (tous, ou ceux modifiés avec `--changed`) |
 | `measures` | aucune | `{ pattern, direction, perFile, except }` : un motif compté dans le code de production, ajouté au cliquet |
-| `models` | les échelles de `scripts/loop/models.mjs` | `ladder`, `codexLadder`, `levels`, `retro` : échelles Claude et Codex de la boucle, niveaux de ticket, modèle de la rétrospective |
+| `models` | les échelles de `scripts/loop/models.mjs` | `ladder`, `codexLadder`, `opencodeLadder`, `levels`, `retro` : échelles Claude, Codex et OpenCode de la boucle, niveaux de ticket, modèle de la rétrospective |
 
 La boucle passe à ses sessions les variables `HARNESS_LOOP`, `HARNESS_TICKET`, `HARNESS_TICKET_FILE`,
 `HARNESS_ALLOW_INSTALL`, `HARNESS_EDIT` (ticket de harnais), `HARNESS_EDIT_SCOPE` (portée d'une
-harmonisation), `HARNESS_REVIEW_MODEL`, `HARNESS_ENGINE` (`codex` pour une session Codex), `HARNESS_HOOK_RUN`
-(témoin de chargement des hooks Codex) et `HARNESS_TUNE`. `HARNESS_CLAUDE_BIN` et `HARNESS_CODEX_BIN`
-remplacent les CLI `claude` et `codex` (les tests y mettent de fausses sessions) ;
+harmonisation), `HARNESS_REVIEW_MODEL`, `HARNESS_ENGINE` (`codex` ou `opencode` pour une session de ce
+moteur), `HARNESS_HOOK_RUN` (témoin de chargement des hooks Codex et du plugin OpenCode) et `HARNESS_TUNE` ;
+une session OpenCode reçoit aussi `OPENCODE_CONFIG_DIR`, un dossier vide. `HARNESS_CLAUDE_BIN`,
+`HARNESS_CODEX_BIN` et `HARNESS_OPENCODE_BIN` remplacent les CLI `claude`, `codex` et `opencode` (les tests y
+mettent de fausses sessions) ;
 `HARNESS_CODEX_SKIP_CAPACITY_WAIT` supprime l'attente entre deux reprises de capacité ;
 `HARNESS_TEST_BUDGET_MS` borne la durée d'une suite de tests.
 
@@ -142,10 +146,16 @@ Une évolution du noyau se fait avec son test, comme dans un projet, puis s'insc
 - Les garde-fous lisent le texte des commandes : ils rattrapent l'erreur, pas la malveillance. Ce
   n'est pas un bac à sable.
 - La boucle lit le flux `stream-json` de Claude Code (`result`, `modelUsage`, `permission_denials`,
-  `tool_use_result.agentType`, `handbackReport`) et le flux `--json` de `codex exec` (événements de
-  session, de tour et d'erreur, messages de capacité et de quota). Les tests les simulent avec de fausses
-  sessions : un changement de format d'un CLI ne les ferait pas échouer. Après une mise à jour de Claude
-  Code ou de Codex, vérifier un vrai ticket avec `--max 1`.
+  `tool_use_result.agentType`, `handbackReport`), le flux `--json` de `codex exec` (événements de
+  session, de tour et d'erreur, messages de capacité et de quota) et le flux `--format json` de
+  `opencode run` (`step_start`, `tool_use`, `step_finish`, `error`, `sessionID`), complété par
+  `opencode session export` pour le coût. Les tests les simulent avec de fausses sessions : un changement
+  de format d'un CLI ne les ferait pas échouer. Après une mise à jour de Claude Code, de Codex ou
+  d'OpenCode, vérifier un vrai ticket avec `--max 1`.
+- Le moteur OpenCode dépend de l'API des plugins d'OpenCode 2 (hooks `tool.execute.before` et `after`,
+  `permission.evaluate`, `session.prompt`, `session.compaction`), relevée sur la version 2.0.22, et de
+  `opencode run --standalone`. Le quota et la saturation d'un fournisseur OpenCode ne sont pas reconnus
+  à part : ils refusent la tentative comme une autre erreur.
 - Le moteur Codex dépend d'options de `codex exec` (`--disable`, `--dangerously-bypass-hook-trust`,
   `exec resume`) et de l'approbation de `.codex/hooks.json` dans la config de l'utilisateur, liée au
   chemin absolu du dépôt : un worktree ou une copie demande sa propre approbation.
@@ -161,5 +171,6 @@ Une évolution du noyau se fait avec son test, comme dans un projet, puis s'insc
 Extrait le 14 octobre 2026 du harnais de TVLens (commit `49cfbb4`), avec le ticket de harnais T153 alors
 en cours : un relecteur n'accepte que sans constat dans le périmètre, et les écarts aux critères sont
 déclarés avant l'implémentation. Mis à jour le 19 octobre 2026 jusqu'au commit TVLens `b893bae` (version
-0.2.0 : moteur Codex, harmonisation, relève, quota ; voir `CHANGELOG.md`). TVLens était parti du squelette harness-codex-claude. Les skills
+0.2.0 : moteur Codex, harmonisation, relève, quota ; voir `CHANGELOG.md`), puis doté du moteur OpenCode
+(version 0.3.0). TVLens était parti du squelette harness-codex-claude. Les skills
 `decoupage` et `tests` sont adaptées de mattpocock/skills (licence MIT).

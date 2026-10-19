@@ -27,7 +27,7 @@ const LOOP_ONLY = [
   [/\bgit\s+(commit|push|merge|rebase|cherry-pick|revert|tag|stash)\b/, "la boucle committe et pousse elle-même après ses contrôles"],
   [/\bgit\s+switch\b/, "un ticket se traite sur la branche où la boucle a été lancée"],
   [/\bgit\s+checkout\b(?!.*\s--\s)/, "un ticket se traite sur la branche où la boucle a été lancée"],
-  [/(^|[;&|]\s*)(claude|codex)\s/, "une session de ticket ne lance pas d'autre session"],
+  [/(^|[;&|]\s*)(claude|codex|opencode)\s/, "une session de ticket ne lance pas d'autre session"],
   [/(^|[;&|]\s*)gh\s/, "aucune action GitHub depuis une session de ticket"],
 ];
 // Installation ou retrait de dépendances, pour les gestionnaires courants. `yarn` seul installe.

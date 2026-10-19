@@ -15,10 +15,17 @@ export function readInput() {
 
 export const loopMode = process.env.HARNESS_LOOP === "1";
 
-/** Sans racine Claude, les hooks partagés sont reçus par Codex, même en interactif. */
+// Skill de ticket de chaque moteur externe, que le contexte et les refus de fin nomment.
+const ENGINE_SKILLS = {
+  codex: ".agents/skills/ticket-codex/SKILL.md",
+  opencode: ".agents/skills/ticket-opencode/SKILL.md",
+};
+
+/** Le moteur déclaré l'emporte ; sans moteur ni racine Claude, les hooks partagés sont reçus par Codex, même en interactif. */
 export function ticketSkill() {
-  const codex = process.env.HARNESS_ENGINE === "codex" || !process.env.CLAUDE_PROJECT_DIR;
-  return codex ? ".agents/skills/ticket-codex/SKILL.md" : "ticket";
+  const engine = process.env.HARNESS_ENGINE;
+  if (Object.hasOwn(ENGINE_SKILLS, engine ?? "")) return ENGINE_SKILLS[engine];
+  return process.env.CLAUDE_PROJECT_DIR ? "ticket" : ENGINE_SKILLS.codex;
 }
 
 export function projectDir(input) {

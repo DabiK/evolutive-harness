@@ -44,6 +44,7 @@ test("in a ticket session, integration commands and destructive commands are den
     "git stash",
     "rm -rf ..",
     "claude -p 'do it'",
+    "opencode run 'do it'",
     "gh pr create",
     "npm install left-pad",
     "pnpm add left-pad",
@@ -476,6 +477,8 @@ for (const [name, engine, claudeRoot, skill] of [
   ["Codex interactive", "", "", ".agents/skills/ticket-codex/SKILL.md"],
   ["Claude interactive", "", "project", "ticket"],
   ["Codex explicit", "codex", "project", ".agents/skills/ticket-codex/SKILL.md"],
+  ["OpenCode, whose plugin gives the project root", "opencode", "project", ".agents/skills/ticket-opencode/SKILL.md"],
+  ["OpenCode without a project root", "opencode", "", ".agents/skills/ticket-opencode/SKILL.md"],
 ]) {
   test(`the startup and missing verdict messages name the receiving engine skill: ${name}`, (t) => {
     const repo = harnessRepo();
