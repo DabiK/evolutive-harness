@@ -285,7 +285,12 @@ erreur. `--fallback-engine` reste propre à Codex. Le commit est signé
 les tests.
 
 En interactif, OpenCode charge le même plugin depuis son serveur d'arrière-plan : les écritures du
-harnais et les commandes à risque y demandent confirmation, comme avec Claude.
+harnais et les commandes à risque y demandent confirmation, comme avec Claude. Les sessions de la
+boucle restent dans la base d'OpenCode (`opencode session list` dans le projet), sous leur titre.
+
+Ordre de grandeur, mesuré le 19 octobre 2026 sur OpenCode 2.0.22 : un ticket minuscule (une fonction et
+ses deux tests) a pris 20 étapes de DeepSeek V4.1 Flash (variante high), 8 minutes dont la plupart pour
+le contrôle complet, et 0,01 $ côté OpenCode ; la relecture Opus s'y ajoute et n'est pas comptée.
 
 ### Relève après intégration de la boucle elle-même
 

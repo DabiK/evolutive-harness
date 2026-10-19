@@ -42,6 +42,11 @@ DeepSeek. Ce que `--update` apporte au projet :
 Pas pris en charge : la reconnaissance du quota et de la saturation d'un fournisseur OpenCode (ils
 refusent la tentative comme une autre erreur) et `--fallback-engine` avec OpenCode.
 
+Essai réel le 19 octobre 2026, OpenCode 2.0.22, dans un projet jetable : un ticket minuscule intégré en
+une tentative sur `opencode-go/deepseek-v4.1-flash#high`, relu et accepté par Opus, 0,01 $ côté
+OpenCode. Le plugin y a refusé une écriture du harnais et un `git commit`, et ajouté au résultat d'une
+édition son contrôle rapide en échec.
+
 ## 0.2.0 — 2026-10-19
 
 Rattrapage du harnais de TVLens jusqu'au commit `b893bae` (tickets T154 à T292 qui touchent au harnais),
