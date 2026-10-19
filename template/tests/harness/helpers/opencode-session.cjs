@@ -43,7 +43,10 @@ const write = (file, text) => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, text);
 };
-const verdict = (statut, extra = {}) => write(path.join(dir, "verdict.json"), JSON.stringify({ statut, resume: "fake opencode", preuves: ["fake"], reste: [], ...extra }));
+const verdict = (statut, extra = {}) => {
+  const value = { statut, resume: "fake opencode", preuves: ["fake"], reste: [], ...extra };
+  write(path.join(dir, "verdict.json"), JSON.stringify(value));
+};
 (async () => {
   if (resumed && process.env.FAKE_OPENCODE_RESUME_FAILURE === "1") {
     fs.appendFileSync(callsFile, JSON.stringify(call) + "\\n");
